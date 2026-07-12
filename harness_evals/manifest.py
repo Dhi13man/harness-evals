@@ -21,6 +21,11 @@ from .comparator_profiles import (
     resolve_builtin_profile,
     resolve_profile_directory,
 )
+from .provider_capabilities import (
+    ProviderCapabilityError,
+    adapter_id_for_legacy_kind,
+    capabilities_for,
+)
 
 
 IDENTIFIER_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
@@ -49,6 +54,11 @@ class ProviderConfig:
     reasoning_effort: str | None = None
     billing_basis: str = "metered_api"
     protocol_lock: Path | None = None
+    adapter_id: str | None = None
+
+    @property
+    def reviewed_adapter_id(self) -> str:
+        return self.adapter_id or adapter_id_for_legacy_kind(self.kind)
 
 
 @dataclass(frozen=True)
@@ -515,14 +525,17 @@ def _parse_provider(
     location: str,
     suite_root: Path,
     *,
+    schema_version: int,
+    role: str,
     allow_codex: bool = True,
 ) -> ProviderConfig:
+    identity_field = "adapter" if schema_version >= 6 else "kind"
     data = _object(
         raw,
         location,
-        required={"kind", "model", "timeout_seconds"},
+        required={identity_field, "model", "timeout_seconds"},
         allowed={
-            "kind",
+            identity_field,
             "model",
             "timeout_seconds",
             "executable",
@@ -532,9 +545,18 @@ def _parse_provider(
             "protocol_lock",
         },
     )
-    kind = _string(data["kind"], f"{location}.kind")
-    if kind not in {"claude", "codex", "fake"}:
-        raise ManifestError(f"{location}.kind must be 'claude', 'codex', or 'fake'")
+    adapter_id = None
+    if schema_version >= 6:
+        adapter_id = _string(data["adapter"], f"{location}.adapter")
+        try:
+            capabilities = capabilities_for(adapter_id, role=role)
+        except ProviderCapabilityError as exc:
+            raise ManifestError(str(exc)) from exc
+        kind = capabilities.legacy_kind
+    else:
+        kind = _string(data["kind"], f"{location}.kind")
+        if kind not in {"claude", "codex", "fake"}:
+            raise ManifestError(f"{location}.kind must be 'claude', 'codex', or 'fake'")
     if kind == "codex" and not allow_codex:
         raise ManifestError("comparator.kind must not be 'codex'")
     executable = None
@@ -619,6 +641,7 @@ def _parse_provider(
         reasoning_effort=reasoning_effort,
         billing_basis=billing_basis,
         protocol_lock=protocol_lock,
+        adapter_id=adapter_id,
     )
 
 
@@ -1058,7 +1081,7 @@ def load_suite(path: str | Path) -> SuiteSpec:
     if not isinstance(data, dict):
         raise ManifestError("suite must be an object")
     schema_version = _integer(
-        data.get("schema_version"), "schema_version", minimum=2, maximum=5
+        data.get("schema_version"), "schema_version", minimum=2, maximum=6
     )
     common_fields = {
         "$schema",
@@ -1129,9 +1152,22 @@ def load_suite(path: str | Path) -> SuiteSpec:
         )
     suite_root = manifest_path.parent
     repository_root = _root_path(suite_root, root["repository_root"], "repository_root")
-    provider = _parse_provider(root["provider"], "provider", suite_root)
+    provider = _parse_provider(
+        root["provider"],
+        "provider",
+        suite_root,
+        schema_version=schema_version,
+        role="generation",
+    )
     comparator = (
-        _parse_provider(root["comparator"], "comparator", suite_root, allow_codex=False)
+        _parse_provider(
+            root["comparator"],
+            "comparator",
+            suite_root,
+            schema_version=schema_version,
+            role="comparison",
+            allow_codex=False,
+        )
         if evaluation_mode == "judged"
         else None
     )

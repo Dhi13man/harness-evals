@@ -82,6 +82,8 @@ def _release(*, test: bool) -> dict[str, Any]:
         "provider_source_sha256": PROJECT_ROOT / "harness_evals/providers.py",
         "profile_registry_source_sha256": PROJECT_ROOT
         / "harness_evals/comparator_profiles.py",
+        "provider_capability_registry_source_sha256": PROJECT_ROOT
+        / "harness_evals/provider_capabilities.py",
         "harness_manifest_source_sha256": PROJECT_ROOT / "harness_evals/manifest.py",
         "harness_package_source_sha256": PROJECT_ROOT / "harness_evals/__init__.py",
         "run_evals_source_sha256": PROJECT_ROOT / "harness_evals/cli.py",

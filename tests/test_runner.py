@@ -572,6 +572,36 @@ class SuiteFixture:
         self.manifest["holdout"] = {"comparison_ids": list(comparison_ids)}
         self.save_manifest()
 
+    @staticmethod
+    def _use_adapter(config: dict[str, object]) -> None:
+        adapter_ids = {
+            "claude": "claude-cli",
+            "codex": "codex-app-server",
+            "fake": "deterministic-fake",
+        }
+        config["adapter"] = adapter_ids[config.pop("kind")]
+
+    def use_v6_judged(
+        self,
+        comparison_ids: tuple[str, ...] = ("without-current", "old-current"),
+        bundle_source: str = "skills/demo",
+    ) -> None:
+        self.use_v5_judged(comparison_ids, bundle_source)
+        self.manifest["schema_version"] = 6
+        self._use_adapter(self.manifest["provider"])
+        self._use_adapter(self.manifest["comparator"])
+        self.save_manifest()
+
+    def use_v6_objective(
+        self,
+        comparison_ids: tuple[str, ...] = ("without-current", "old-current"),
+        bundle_source: str = "skills/demo",
+    ) -> None:
+        self.use_v5_objective(comparison_ids, bundle_source)
+        self.manifest["schema_version"] = 6
+        self._use_adapter(self.manifest["provider"])
+        self.save_manifest()
+
     def isolate_basic_case(self) -> None:
         case_root = "cases/basic"
         self._write_suite(f"{case_root}/prompt.md", "Fix and verify the result.\n")
@@ -6291,6 +6321,93 @@ class ManifestValidationTests(unittest.TestCase):
                 with self.assertRaises(ManifestError):
                     load_suite(self.fixture.manifest_path)
 
+    def test_v6_selects_reviewed_provider_adapters_without_kind_fields(self) -> None:
+        schema = json.loads((HARNESS_ROOT / "suite.schema.json").read_text())
+        self.fixture.use_v6_judged()
+        payload = copy.deepcopy(self.fixture.manifest)
+        self.assertFalse(list(Draft202012Validator(schema).iter_errors(payload)))
+        suite = load_suite(self.fixture.manifest_path)
+        self.assertEqual(suite.provider.adapter_id, "deterministic-fake")
+        self.assertEqual(suite.provider.kind, "fake")
+        self.assertEqual(suite.comparator.adapter_id, "deterministic-fake")
+
+        generation_configs = (
+            {
+                "adapter": "claude-cli",
+                "executable": str(self.fixture.fake_codex),
+                "max_budget_usd": 1.0,
+                "model": "fake-model-v1",
+                "timeout_seconds": 10,
+            },
+            {
+                "adapter": "codex-app-server",
+                "billing_basis": "chatgpt_subscription",
+                "executable": str(self.fixture.fake_codex),
+                "model": "gpt-5.6-terra",
+                "protocol_lock": self.fixture.codex_protocol_lock.name,
+                "reasoning_effort": "ultra",
+                "timeout_seconds": 10,
+            },
+            payload["provider"],
+        )
+        for config in generation_configs:
+            with self.subTest(adapter=config["adapter"]):
+                candidate = copy.deepcopy(payload)
+                candidate["provider"] = copy.deepcopy(config)
+                self.assertFalse(
+                    list(Draft202012Validator(schema).iter_errors(candidate))
+                )
+                self.fixture.manifest = candidate
+                self.fixture.save_manifest()
+                parsed = load_suite(self.fixture.manifest_path)
+                self.assertEqual(parsed.provider.adapter_id, config["adapter"])
+
+        mutations: list[dict[str, object]] = []
+        unknown = copy.deepcopy(payload)
+        unknown["provider"]["adapter"] = "suite-claimed-production"
+        mutations.append(unknown)
+        legacy_kind = copy.deepcopy(payload)
+        legacy_kind["provider"]["kind"] = legacy_kind["provider"].pop("adapter")
+        mutations.append(legacy_kind)
+        codex_comparator = copy.deepcopy(payload)
+        codex_comparator["comparator"] = {
+            "adapter": "codex-app-server",
+            "billing_basis": "chatgpt_subscription",
+            "executable": str(self.fixture.fake_codex),
+            "model": "gpt-5.6-luna",
+            "protocol_lock": self.fixture.codex_protocol_lock.name,
+            "reasoning_effort": "max",
+            "timeout_seconds": 10,
+        }
+        mutations.append(codex_comparator)
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                self.assertTrue(
+                    list(Draft202012Validator(schema).iter_errors(mutation))
+                )
+                self.fixture.manifest = mutation
+                self.fixture.save_manifest()
+                with self.assertRaises(ManifestError):
+                    load_suite(self.fixture.manifest_path)
+
+        legacy_adapter = copy.deepcopy(payload)
+        legacy_adapter["schema_version"] = 5
+        with self.subTest(mutation="adapter in schema v5"):
+            self.assertTrue(
+                list(Draft202012Validator(schema).iter_errors(legacy_adapter))
+            )
+            self.fixture.manifest = legacy_adapter
+            self.fixture.save_manifest()
+            with self.assertRaises(ManifestError):
+                load_suite(self.fixture.manifest_path)
+
+        self.fixture.manifest = self.fixture._manifest()
+        self.fixture.save_manifest()
+        self.fixture.use_v6_objective()
+        objective = load_suite(self.fixture.manifest_path)
+        self.assertEqual(objective.provider.adapter_id, "deterministic-fake")
+        self.assertIsNone(objective.comparator)
+
     def test_v4_requires_bundle_source_and_legacy_versions_derive_it(self) -> None:
         schema = json.loads((HARNESS_ROOT / "suite.schema.json").read_text())
         original_bytes = self.fixture.manifest_path.read_bytes()
@@ -7319,7 +7436,7 @@ class CheckedInSuiteTests(unittest.TestCase):
             schema["properties"]["cases"]["items"]["required"],
         )
 
-    def test_suite_schema_supports_strict_v2_v3_v4_and_v5_modes(self) -> None:
+    def test_suite_schema_supports_strict_v2_through_v6_modes(self) -> None:
         schema = json.loads(
             (HARNESS_ROOT / "suite.schema.json").read_text(encoding="utf-8")
         )
@@ -7330,6 +7447,7 @@ class CheckedInSuiteTests(unittest.TestCase):
                 "#/$defs/suiteV3",
                 "#/$defs/suiteV4",
                 "#/$defs/suiteV5",
+                "#/$defs/suiteV6",
             ],
         )
         self.assertEqual(
@@ -7350,6 +7468,10 @@ class CheckedInSuiteTests(unittest.TestCase):
             schema["$defs"]["suiteV5"]["properties"]["schema_version"]["const"], 5
         )
         self.assertIn("holdout", schema["$defs"]["suiteV5"]["required"])
+        self.assertEqual(
+            schema["$defs"]["suiteV6"]["properties"]["schema_version"]["const"], 6
+        )
+        self.assertIn("providerV6", schema["$defs"])
 
     def test_gcc_attestation_includes_derived_driver_closure(self) -> None:
         gcc = shutil.which("gcc")

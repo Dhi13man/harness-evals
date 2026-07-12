@@ -2038,6 +2038,7 @@ def _validate_release(
             "harness_runner_source_sha256",
             "provider_source_sha256",
             "profile_registry_source_sha256",
+            "provider_capability_registry_source_sha256",
             "harness_manifest_source_sha256",
             "harness_package_source_sha256",
             "run_evals_source_sha256",
@@ -2064,6 +2065,7 @@ def _validate_release(
         "harness_runner_source_sha256",
         "provider_source_sha256",
         "profile_registry_source_sha256",
+        "provider_capability_registry_source_sha256",
         "harness_manifest_source_sha256",
         "harness_package_source_sha256",
         "run_evals_source_sha256",
@@ -2091,6 +2093,9 @@ def _validate_release(
             "profile_registry_source_sha256": project_root
             / "harness_evals"
             / "comparator_profiles.py",
+            "provider_capability_registry_source_sha256": project_root
+            / "harness_evals"
+            / "provider_capabilities.py",
             "harness_manifest_source_sha256": project_root
             / "harness_evals"
             / "manifest.py",
@@ -2186,6 +2191,8 @@ def validate_packaged_release_bindings(
         "provider_source_sha256": runtime_source_root / "providers.py",
         "profile_registry_source_sha256": runtime_source_root
         / "comparator_profiles.py",
+        "provider_capability_registry_source_sha256": runtime_source_root
+        / "provider_capabilities.py",
         "harness_manifest_source_sha256": runtime_source_root / "manifest.py",
         "harness_package_source_sha256": runtime_source_root / "__init__.py",
         "run_evals_source_sha256": runtime_source_root / "cli.py",
