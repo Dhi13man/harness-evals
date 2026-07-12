@@ -4482,6 +4482,24 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
         case_records = copy.deepcopy(self.payload["cases"])
         return cases, comparisons, source_records, case_records
 
+    def objective_v5_suite(self) -> SuiteSpec:
+        self.fixture.manifest["schema_version"] = 5
+        self.fixture.manifest["evaluation_mode"] = "objective_only"
+        self.fixture.manifest.pop("comparator")
+        self.fixture.manifest.pop("comparator_profile", None)
+        self.fixture.manifest["shared_verifier_dir"] = None
+        self.fixture.manifest["holdout"] = {"comparison_ids": list(self.comparison_ids)}
+        self.fixture.manifest["cases"] = [
+            case
+            for case in self.fixture.manifest["cases"]
+            if case["skill"] == "engineering"
+        ]
+        for case in self.fixture.manifest["cases"]:
+            case["bundle_source"] = "skills/engineering"
+            case.pop("comparator_contract")
+        self.fixture.save_manifest()
+        return load_suite(self.fixture.manifest_path)
+
     def test_non_authoritative_generator_rejects_holdout_before_agent_turns(
         self,
     ) -> None:
@@ -5367,22 +5385,7 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
             )
 
     def test_schema_v5_objective_holdout_seals_policy_without_comparator(self) -> None:
-        self.fixture.manifest["schema_version"] = 5
-        self.fixture.manifest["evaluation_mode"] = "objective_only"
-        self.fixture.manifest.pop("comparator")
-        self.fixture.manifest.pop("comparator_profile", None)
-        self.fixture.manifest["shared_verifier_dir"] = None
-        self.fixture.manifest["holdout"] = {"comparison_ids": list(self.comparison_ids)}
-        self.fixture.manifest["cases"] = [
-            case
-            for case in self.fixture.manifest["cases"]
-            if case["skill"] == "engineering"
-        ]
-        for case in self.fixture.manifest["cases"]:
-            case["bundle_source"] = "skills/engineering"
-            case.pop("comparator_contract")
-        self.fixture.save_manifest()
-        suite = load_suite(self.fixture.manifest_path)
+        suite = self.objective_v5_suite()
         runner = EvalRunner(suite)
         self.addCleanup(runner.close)
 
@@ -5442,6 +5445,73 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
         self.assertNotIn(
             "comparator-spend", {path.name for path in result_dir.iterdir()}
         )
+
+    def test_generic_holdout_rejects_cross_authority_substitution(self) -> None:
+        suite = self.objective_v5_suite()
+        runner = EvalRunner(suite)
+        self.addCleanup(runner.close)
+        output = self.fixture.root / "objective-authority-plan.json"
+        with (
+            patch.object(
+                runner, "_assert_generator_release_authority", return_value=None
+            ),
+            patch.object(
+                runner,
+                "_production_generator_release_authoritative",
+                return_value=True,
+            ),
+        ):
+            runner.prepare_holdout_plan(
+                output_path=output,
+                plan_id="objective-authority-v1",
+                reviewers=("reviewer-a",),
+                freeze_record="review:freeze:objective-authority-v1",
+                seal_record="review:seal:objective-authority-v1",
+            )
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            first_case = sorted(payload["source_bindings"][0]["source_sha256_by_case"])[
+                0
+            ]
+            mutations = (
+                (
+                    "objective acceptance authority",
+                    lambda value: value.__setitem__(
+                        "objective_acceptance_policy_sha256", "f" * 64
+                    ),
+                ),
+                (
+                    "source bindings",
+                    lambda value: value["source_bindings"][0][
+                        "source_sha256_by_case"
+                    ].__setitem__(first_case, "e" * 64),
+                ),
+                (
+                    "invalid holdout plan",
+                    lambda value: value.__setitem__(
+                        "comparator_release_sha256", "d" * 64
+                    ),
+                ),
+                (
+                    "invalid holdout plan",
+                    lambda value: value["source_bindings"].reverse(),
+                ),
+            )
+            for index, (message, mutate) in enumerate(mutations):
+                with self.subTest(mutation=message):
+                    invalid = copy.deepcopy(payload)
+                    mutate(invalid)
+                    plan_path = self.fixture.save_holdout_plan(
+                        invalid, name=f"objective-authority-invalid-{index}.json"
+                    )
+                    with self.assertRaisesRegex(RunnerError, message):
+                        runner.preflight(
+                            RunSelection(
+                                split="holdout",
+                                comparison_ids=self.comparison_ids,
+                                holdout_plan=plan_path,
+                            )
+                        )
+        self.assertEqual(runner.agent_provider.agent_requests, [])
 
     def test_holdout_consumption_is_one_shot_across_roots_copies_and_crashes(
         self,
