@@ -6605,6 +6605,76 @@ class ManifestValidationTests(unittest.TestCase):
         self.assertEqual(objective.provider.adapter_id, "deterministic-fake")
         self.assertIsNone(objective.comparator)
 
+    def test_v7_requires_explicit_case_artifact_contracts(self) -> None:
+        schema = json.loads((HARNESS_ROOT / "suite.schema.json").read_text())
+        self.fixture.use_v6_objective()
+        self.fixture.manifest["schema_version"] = 7
+        for index, case in enumerate(self.fixture.manifest["cases"]):
+            case["artifact_contract"] = {
+                "kind": ("final_output_text", "final_output_json", "workspace_diff")[
+                    index % 3
+                ]
+            }
+        self.fixture.save_manifest()
+        payload = copy.deepcopy(self.fixture.manifest)
+
+        self.assertFalse(list(Draft202012Validator(schema).iter_errors(payload)))
+        for kind in ("final_output_text", "final_output_json", "workspace_diff"):
+            candidate = copy.deepcopy(payload)
+            candidate["cases"][0]["artifact_contract"]["kind"] = kind
+            self.fixture.manifest = candidate
+            self.fixture.save_manifest()
+            self.assertEqual(
+                load_suite(self.fixture.manifest_path).cases[0].artifact_contract.kind,
+                kind,
+            )
+
+        missing = copy.deepcopy(payload)
+        missing["cases"][0].pop("artifact_contract")
+        unknown = copy.deepcopy(payload)
+        unknown["cases"][0]["artifact_contract"]["kind"] = "claimed-by-suite"
+        legacy_with_contract = copy.deepcopy(payload)
+        legacy_with_contract["schema_version"] = 6
+        for mutation in (missing, unknown, legacy_with_contract):
+            with self.subTest(mutation=mutation):
+                self.assertTrue(
+                    list(Draft202012Validator(schema).iter_errors(mutation))
+                )
+                self.fixture.manifest = mutation
+                self.fixture.save_manifest()
+                with self.assertRaises(ManifestError):
+                    load_suite(self.fixture.manifest_path)
+
+        self.fixture.manifest = self.fixture._manifest()
+        self.fixture.save_manifest()
+        raw_bytes = self.fixture.manifest_path.read_bytes()
+        legacy = load_suite(self.fixture.manifest_path)
+        self.assertEqual(legacy.raw_bytes, raw_bytes)
+        self.assertEqual(legacy.manifest_hash, hashlib.sha256(raw_bytes).hexdigest())
+        self.assertEqual(legacy.cases[0].artifact_contract.kind, "workspace_diff")
+        legacy_fingerprint = _release_case_fingerprint(
+            legacy.cases[0],
+            prompt_sha256="1" * 64,
+            fixture_sha256="2" * 64,
+            context_content_sha256s={},
+        )
+        declared_case = replace(
+            legacy.cases[0],
+            artifact_contract=replace(
+                legacy.cases[0].artifact_contract,
+                declared=True,
+            ),
+        )
+        self.assertNotEqual(
+            legacy_fingerprint,
+            _release_case_fingerprint(
+                declared_case,
+                prompt_sha256="1" * 64,
+                fixture_sha256="2" * 64,
+                context_content_sha256s={},
+            ),
+        )
+
     def test_v4_requires_bundle_source_and_legacy_versions_derive_it(self) -> None:
         schema = json.loads((HARNESS_ROOT / "suite.schema.json").read_text())
         original_bytes = self.fixture.manifest_path.read_bytes()
@@ -7634,7 +7704,7 @@ class CheckedInSuiteTests(unittest.TestCase):
             schema["properties"]["cases"]["items"]["required"],
         )
 
-    def test_suite_schema_supports_strict_v2_through_v6_modes(self) -> None:
+    def test_suite_schema_supports_strict_v2_through_v7_modes(self) -> None:
         schema = json.loads(
             (HARNESS_ROOT / "suite.schema.json").read_text(encoding="utf-8")
         )
@@ -7646,6 +7716,7 @@ class CheckedInSuiteTests(unittest.TestCase):
                 "#/$defs/suiteV4",
                 "#/$defs/suiteV5",
                 "#/$defs/suiteV6",
+                "#/$defs/suiteV7",
             ],
         )
         self.assertEqual(
@@ -7670,6 +7741,10 @@ class CheckedInSuiteTests(unittest.TestCase):
             schema["$defs"]["suiteV6"]["properties"]["schema_version"]["const"], 6
         )
         self.assertIn("providerV6", schema["$defs"])
+        self.assertEqual(
+            schema["$defs"]["suiteV7"]["properties"]["schema_version"]["const"], 7
+        )
+        self.assertIn("artifactContract", schema["$defs"])
 
     def test_gcc_attestation_includes_derived_driver_closure(self) -> None:
         gcc = shutil.which("gcc")

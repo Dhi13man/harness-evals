@@ -5989,6 +5989,9 @@ def _release_case_fingerprint(
         "schema_version": 1,
         "skill": case.skill,
     }
+    if case.artifact_contract.declared:
+        payload["artifact_contract"] = {"kind": case.artifact_contract.kind}
+        payload["schema_version"] = 2
     return _sha256(_canonical_json_bytes(payload))
 
 

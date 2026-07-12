@@ -159,7 +159,11 @@ class ProviderResultContractTests(unittest.TestCase):
                 self.assertEqual(
                     capabilities.sha256, canonical_sha256(capabilities.as_json())
                 )
-                self.assertEqual(capabilities.artifact_outputs, ("workspace_diff",))
+                self.assertEqual(
+                    capabilities.artifact_outputs,
+                    ("final_output_json", "final_output_text", "workspace_diff"),
+                )
+                self.assertEqual(capabilities.contract_revision, 2)
         self.assertEqual(
             capabilities_for("claude-cli", role="comparison").authority_scope,
             "production",
