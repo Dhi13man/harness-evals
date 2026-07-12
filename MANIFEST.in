@@ -1,0 +1,20 @@
+include CHANGELOG.md
+include CITATION.cff
+include CODE_OF_CONDUCT.md
+include CONTRIBUTING.md
+include GOVERNANCE.md
+include LICENSE
+include README.md
+include SECURITY.md
+include SUPPORT.md
+include baseline-authority.json
+include codex-app-server-lock.json
+include holdout-plan.schema.json
+include suite.json
+include suite.schema.json
+recursive-include cases *
+recursive-include harness_evals *.json *.md
+recursive-include skills *.md
+recursive-include tests *.py
+global-exclude __pycache__
+global-exclude *.py[cod]

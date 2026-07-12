@@ -1,0 +1,997 @@
+{
+  "$schema": "suite.schema.json",
+  "schema_version": 2,
+  "suite_id": "harness-evals-software-engineering-v1",
+  "seed": 20260710,
+  "repository_root": ".",
+  "provider": {
+    "kind": "claude",
+    "executable": "claude",
+    "model": "claude-haiku-4-5-20251001",
+    "max_budget_usd": 1.5,
+    "timeout_seconds": 300
+  },
+  "comparator": {
+    "kind": "claude",
+    "executable": "claude",
+    "model": "claude-sonnet-5",
+    "max_budget_usd": 1.0,
+    "timeout_seconds": 300
+  },
+  "variants": [
+    {
+      "id": "no-skill",
+      "kind": "without_skill"
+    },
+    {
+      "id": "original",
+      "kind": "git_ref",
+      "git_ref": "21db6fdad124c2b0769dee6466a23ebddc0264bd"
+    },
+    {
+      "id": "candidate",
+      "kind": "worktree",
+      "root": ".",
+      "source_ref": "HEAD"
+    }
+  ],
+  "comparisons": [
+    {
+      "id": "original-vs-no-skill",
+      "control": "no-skill",
+      "treatment": "original",
+      "repetitions": 3,
+      "comparator_order": "ab_ba"
+    },
+    {
+      "id": "candidate-vs-original",
+      "control": "original",
+      "treatment": "candidate",
+      "repetitions": 3,
+      "comparator_order": "ab_ba"
+    },
+    {
+      "id": "candidate-vs-no-skill",
+      "control": "no-skill",
+      "treatment": "candidate",
+      "repetitions": 3,
+      "comparator_order": "ab_ba"
+    }
+  ],
+  "cases": [
+    {
+      "id": "software-minimal-slug-limit",
+      "skill": "engineering",
+      "split": "train",
+      "prompt_file": "cases/software/minimal-slug-limit/prompt.md",
+      "fixture_dir": "cases/software/minimal-slug-limit/fixture",
+      "verifier": {
+        "argv": [
+          "python3",
+          "cases/software/minimal-slug-limit/oracle/verify.py"
+        ],
+        "required_tools": [],
+        "timeout_seconds": 10
+      },
+      "context_files": [
+        "skills/engineering/SKILL.md"
+      ],
+      "timeout_seconds": 300,
+      "critical_expectations": [
+        "slug-limit-behavior",
+        "legacy-slug-behavior",
+        "minimal-production-scope",
+        "public-call-contract"
+      ],
+      "comparator_contract": {
+        "requirements": [
+          {
+            "id": "slug-limit-behavior",
+            "kind": "required_behavior",
+            "text": "With a positive max_length, make_slug must return a normalized slug no longer than the limit, never ending in '-', retain the longest complete hyphen-separated prefix when one fits, truncate an overlong first word, return '' for input with no slug characters, and reject zero or negative limits."
+          },
+          {
+            "id": "legacy-slug-behavior",
+            "kind": "required_behavior",
+            "text": "Omitting max_length must preserve the original one-argument signature behavior and exact normalized output for all legacy inputs."
+          },
+          {
+            "id": "minimal-production-scope",
+            "kind": "required_behavior",
+            "text": "The production change must remain in slugger.py; no production-reachable helper, dependency manifest, third-party import, or unrelated file may be added."
+          },
+          {
+            "id": "public-call-contract",
+            "kind": "hard_constraint",
+            "text": "make_slug must keep the original text positional parameter and add max_length as an optional parameter with default None, so both positional and keyword calls remain compatible."
+          }
+        ],
+        "performance_basis": null,
+        "qualitative_bases": {}
+      }
+    },
+    {
+      "id": "software-symbol-verification",
+      "skill": "engineering",
+      "split": "train",
+      "prompt_file": "cases/software/symbol-verification/prompt.md",
+      "fixture_dir": "cases/software/symbol-verification/fixture",
+      "verifier": {
+        "argv": [
+          "python3",
+          "cases/software/symbol-verification/oracle/verify.py"
+        ],
+        "required_tools": [
+          "node"
+        ],
+        "timeout_seconds": 10
+      },
+      "context_files": [
+        "skills/engineering/SKILL.md"
+      ],
+      "timeout_seconds": 300,
+      "critical_expectations": [
+        "cached-token-behavior",
+        "local-api-contract",
+        "no-runtime-dependency"
+      ],
+      "comparator_contract": {
+        "requirements": [
+          {
+            "id": "cached-token-behavior",
+            "kind": "required_behavior",
+            "text": "getCachedAuthorization(cacheFile, nowEpochMs) must return 'Bearer <token>' for a fresh valid record, null for an expired or missing record, and propagate malformed-record errors."
+          },
+          {
+            "id": "local-api-contract",
+            "kind": "required_behavior",
+            "text": "session.js must call the existing readFreshToken API; token-store.js must remain byte-for-byte unchanged and continue to export exactly readFreshToken."
+          },
+          {
+            "id": "no-runtime-dependency",
+            "kind": "hard_constraint",
+            "text": "The change must add no dependency declaration, lockfile, node_modules tree, or non-relative/non-node runtime import."
+          }
+        ],
+        "performance_basis": null,
+        "qualitative_bases": {}
+      }
+    },
+    {
+      "id": "software-secure-archive-restore",
+      "skill": "engineering",
+      "split": "train",
+      "prompt_file": "cases/software/secure-archive-restore/prompt.md",
+      "fixture_dir": "cases/software/secure-archive-restore/fixture",
+      "verifier": {
+        "argv": [
+          "python3",
+          "cases/software/secure-archive-restore/oracle/verify.py"
+        ],
+        "required_tools": [],
+        "timeout_seconds": 365
+      },
+      "context_files": [
+        "skills/engineering/SKILL.md"
+      ],
+      "timeout_seconds": 300,
+      "critical_expectations": [
+        "valid-archive-behavior",
+        "standard-library-only",
+        "path-containment",
+        "unsupported-member-types",
+        "duplicate-member-defense",
+        "declared-resource-limits",
+        "bounded-entry-consumption",
+        "invalid-archive-atomicity",
+        "existing-destination-preserved",
+        "publication-failure-atomicity",
+        "public-call-contract"
+      ],
+      "comparator_contract": {
+        "requirements": [
+          {
+            "id": "valid-archive-behavior",
+            "kind": "required_behavior",
+            "text": "For a valid tar containing directories and regular files, including inputs exactly at every declared limit, restore_project must reproduce exact file bytes and empty directories under a new destination and return sorted POSIX-style relative paths for regular files only."
+          },
+          {
+            "id": "standard-library-only",
+            "kind": "hard_constraint",
+            "text": "The implementation must use only Python standard-library and local project code, without a dependency declaration, vendored package, or external runtime import."
+          },
+          {
+            "id": "path-containment",
+            "kind": "hard_constraint",
+            "text": "Absolute member names and names containing a parent component must raise an exception without creating the destination, writing an escaped path, or leaving other filesystem residue."
+          },
+          {
+            "id": "unsupported-member-types",
+            "kind": "hard_constraint",
+            "text": "Symlinks, hard links, FIFOs, devices, and every member type other than a directory or regular file must raise an exception without publishing output or leaving residue."
+          },
+          {
+            "id": "duplicate-member-defense",
+            "kind": "hard_constraint",
+            "text": "Duplicate output paths and file/directory shape conflicts must raise an exception without publishing output or leaving residue."
+          },
+          {
+            "id": "declared-resource-limits",
+            "kind": "hard_constraint",
+            "text": "The implementation must reject a 129th member, reject any regular file whose declared size exceeds 1 MiB before reading its content, and reject before reading a member whose declared size would make total regular-file content exceed 4 MiB, while accepting values exactly at each limit."
+          },
+          {
+            "id": "bounded-entry-consumption",
+            "kind": "hard_constraint",
+            "text": "Entry-count rejection must occur once the 129th member is observed without scanning or consuming the remaining attacker-controlled archive tail."
+          },
+          {
+            "id": "invalid-archive-atomicity",
+            "kind": "hard_constraint",
+            "text": "A late policy violation, malformed archive, truncated payload, read failure, or write failure must raise an exception while leaving an absent destination absent and leaving no staging or escaped filesystem residue."
+          },
+          {
+            "id": "existing-destination-preserved",
+            "kind": "hard_constraint",
+            "text": "If any filesystem entry already exists at the destination, restore_project must raise an exception and preserve every existing path, byte, type, and mode exactly."
+          },
+          {
+            "id": "publication-failure-atomicity",
+            "kind": "hard_constraint",
+            "text": "On the declared Linux target, publication must use atomic create-only semantics: a filesystem failure or concurrent destination creation while making fully prepared output visible must raise an exception, preserve any competing entry exactly, and remove all invocation-owned staging and external filesystem residue."
+          },
+          {
+            "id": "public-call-contract",
+            "kind": "hard_constraint",
+            "text": "restore_project must retain the exact archive_path and destination parameters without defaults, variadic arguments, or keyword-only incompatibility."
+          }
+        ],
+        "performance_basis": null,
+        "qualitative_bases": {}
+      }
+    },
+    {
+      "id": "software-representative-performance",
+      "skill": "engineering",
+      "split": "train",
+      "prompt_file": "cases/software/representative-performance/prompt.md",
+      "fixture_dir": "cases/software/representative-performance/fixture",
+      "verifier": {
+        "argv": [
+          "python3",
+          "cases/software/representative-performance/oracle/verify.py"
+        ],
+        "required_tools": [
+          "go"
+        ],
+        "timeout_seconds": 500
+      },
+      "context_files": [
+        "skills/engineering/SKILL.md"
+      ],
+      "timeout_seconds": 300,
+      "critical_expectations": [
+        "ranking-behavior-preserved",
+        "representative-speedup"
+      ],
+      "comparator_contract": {
+        "requirements": [
+          {
+            "id": "ranking-behavior-preserved",
+            "kind": "required_behavior",
+            "text": "MostFrequent must preserve its public Go API, return an empty result for non-positive limits, never mutate its input, and order entries by descending count with first-seen tie order on both boundary and representative distributions, using only the standard library."
+          },
+          {
+            "id": "representative-speedup",
+            "kind": "required_behavior",
+            "text": "For several-thousand-tag workloads with high distinct counts, the implementation must materially reduce repeated scans of the growing distinct-tag collection while preserving identical results."
+          }
+        ],
+        "performance_basis": {
+          "kind": "workload",
+          "detail": "Compare how each patch counts several thousand tags with high distinct counts. Prefer an implementation that avoids scanning the growing distinct-tag collection for each input tag while preserving first-seen tie order; no hidden timing measurement is comparator evidence."
+        },
+        "qualitative_bases": {}
+      }
+    },
+    {
+      "id": "software-public-api-compatibility",
+      "skill": "engineering",
+      "split": "train",
+      "prompt_file": "cases/software/public-api-compatibility/prompt.md",
+      "fixture_dir": "cases/software/public-api-compatibility/fixture",
+      "verifier": {
+        "argv": [
+          "python3",
+          "cases/software/public-api-compatibility/oracle/verify.py"
+        ],
+        "required_tools": [
+          "node"
+        ],
+        "timeout_seconds": 10
+      },
+      "context_files": [
+        "skills/engineering/SKILL.md"
+      ],
+      "timeout_seconds": 300,
+      "critical_expectations": [
+        "legacy-require-contract",
+        "duration-extension-behavior",
+        "safe-api-behavior"
+      ],
+      "comparator_contract": {
+        "requirements": [
+          {
+            "id": "legacy-require-contract",
+            "kind": "required_behavior",
+            "text": "The CommonJS default export must remain directly callable; legacy integer s/m/h inputs must retain exact millisecond values, non-string inputs must retain TypeError, and unsupported forms must retain RangeError."
+          },
+          {
+            "id": "duration-extension-behavior",
+            "kind": "required_behavior",
+            "text": "The callable export must parse integer millisecond values and fractional s/m/h values to exact milliseconds without adding a dependency, lockfile, node_modules tree, or external import."
+          },
+          {
+            "id": "safe-api-behavior",
+            "kind": "hard_constraint",
+            "text": "parseDuration.safe(value) must return the same parsed value for valid input and null for invalid or non-string input without throwing."
+          }
+        ],
+        "performance_basis": null,
+        "qualitative_bases": {}
+      }
+    },
+    {
+      "id": "software-concurrent-store",
+      "skill": "engineering",
+      "split": "validation",
+      "prompt_file": "cases/software/concurrent-store/prompt.md",
+      "fixture_dir": "cases/software/concurrent-store/fixture",
+      "verifier": {
+        "argv": [
+          "python3",
+          "cases/software/concurrent-store/oracle/verify.py"
+        ],
+        "required_tools": [
+          "as",
+          "gcc",
+          "go",
+          "ld"
+        ],
+        "timeout_seconds": 280
+      },
+      "context_files": [
+        "skills/engineering/SKILL.md"
+      ],
+      "timeout_seconds": 300,
+      "critical_expectations": [
+        "concurrent-state-correctness",
+        "snapshot-state-ownership",
+        "race-detector-clean"
+      ],
+      "comparator_contract": {
+        "requirements": [
+          {
+            "id": "concurrent-state-correctness",
+            "kind": "required_behavior",
+            "text": "The unchanged Store API must retain every completed Increment under concurrent use and return the exact resulting counts."
+          },
+          {
+            "id": "snapshot-state-ownership",
+            "kind": "required_behavior",
+            "text": "Snapshot must return caller-owned data from one coherent instant; mutating it must not affect Store, and each atomic Transfer must keep both counts non-negative and preserve their combined total."
+          },
+          {
+            "id": "race-detector-clean",
+            "kind": "hard_constraint",
+            "text": "Concurrent Increment, Get, Transfer, and Snapshot execution must complete under the Go race detector without a data race or concurrent-map failure."
+          }
+        ],
+        "performance_basis": null,
+        "qualitative_bases": {}
+      }
+    },
+    {
+      "id": "software-transactional-event-intent",
+      "skill": "engineering",
+      "split": "validation",
+      "prompt_file": "cases/software/transactional-event-intent/prompt.md",
+      "fixture_dir": "cases/software/transactional-event-intent/fixture",
+      "verifier": {
+        "argv": [
+          "python3",
+          "cases/software/transactional-event-intent/oracle/verify.py"
+        ],
+        "required_tools": [],
+        "timeout_seconds": 60
+      },
+      "context_files": [
+        "skills/engineering/SKILL.md"
+      ],
+      "timeout_seconds": 300,
+      "critical_expectations": [
+        "order-event-atomicity",
+        "request-idempotency",
+        "restart-failure-recovery",
+        "stable-event-identity",
+        "multiple-order-event-identity",
+        "public-method-contract"
+      ],
+      "comparator_contract": {
+        "requirements": [
+          {
+            "id": "order-event-atomicity",
+            "kind": "required_behavior",
+            "text": "A committed order must imply one durable recoverable fulfillment intent; an injected failure between multiple database writes must not leave an order without that intent, while a single-write design must recover exactly one event from the committed row."
+          },
+          {
+            "id": "request-idempotency",
+            "kind": "required_behavior",
+            "text": "Repeating a request_id, even with different later arguments, must return the original order, retain its original payload, and produce only one fulfillment event."
+          },
+          {
+            "id": "restart-failure-recovery",
+            "kind": "required_behavior",
+            "text": "A publish failure before broker acceptance must leave the complete event durable across connection close and process restart; a later flush must publish it once and subsequent successful flushes must not republish it, using only stdlib/local fixture code."
+          },
+          {
+            "id": "stable-event-identity",
+            "kind": "required_behavior",
+            "text": "If publish may have succeeded before raising, every retry must use the identical event ID and payload so broker de-duplication is effective."
+          },
+          {
+            "id": "multiple-order-event-identity",
+            "kind": "required_behavior",
+            "text": "Distinct orders must retain distinct stable event IDs and exact per-order payloads across an ambiguous first publish and retry; flush_events must return the exact number attempted successfully in each call."
+          },
+          {
+            "id": "public-method-contract",
+            "kind": "hard_constraint",
+            "text": "EventBus.publish and OrderService.__init__, place_order, and flush_events must retain their exact public parameter names and arities without defaults or variadic arguments."
+          }
+        ],
+        "performance_basis": null,
+        "qualitative_bases": {}
+      }
+    },
+    {
+      "id": "software-behavioral-subtyping",
+      "skill": "engineering",
+      "split": "validation",
+      "prompt_file": "cases/software/behavioral-subtyping/prompt.md",
+      "fixture_dir": "cases/software/behavioral-subtyping/fixture",
+      "verifier": {
+        "argv": [
+          "python3",
+          "cases/software/behavioral-subtyping/oracle/verify.py"
+        ],
+        "required_tools": [],
+        "timeout_seconds": 40
+      },
+      "context_files": [
+        "skills/engineering/SKILL.md"
+      ],
+      "timeout_seconds": 300,
+      "critical_expectations": [
+        "configured-free-policy",
+        "behavioral-substitutability",
+        "existing-policy-contract",
+        "evaluation-independent-behavior",
+        "bounded-production-scope"
+      ],
+      "comparator_contract": {
+        "requirements": [
+          {
+            "id": "configured-free-policy",
+            "kind": "required_behavior",
+            "text": "build_shipping_policy(FREE_SHIPPING_POLICY) must return a ShippingPolicy configured from FREE_SHIPPING_THRESHOLD_CENTS: below-threshold quotes retain the flat zone rate, while totals at or above the threshold return zero shipping and work through checkout_total."
+          },
+          {
+            "id": "behavioral-substitutability",
+            "kind": "hard_constraint",
+            "text": "The configured policy must preserve ShippingPolicy's input and failure contract: zero is valid, negative totals raise ValueError, and unknown zones raise UnsupportedZone even at or above the free threshold so generic callers retain their behavior; checkout consumers must not branch on the concrete subtype."
+          },
+          {
+            "id": "existing-policy-contract",
+            "kind": "hard_constraint",
+            "text": "Existing public function and quote signatures, flat-rate results, unsupported-zone behavior, and ValueError for unknown factory names must remain unchanged."
+          },
+          {
+            "id": "evaluation-independent-behavior",
+            "kind": "hard_constraint",
+            "text": "Production behavior must not depend on evaluator presence, Python invocation shape, process arguments, or other test-specific runtime detection."
+          },
+          {
+            "id": "bounded-production-scope",
+            "kind": "hard_constraint",
+            "text": "Production changes must stay within shipping.py and checkout.py, use only the Python standard library, add no dependency manifest, and never make test files or added helpers production-reachable."
+          }
+        ],
+        "performance_basis": null,
+        "qualitative_bases": {}
+      }
+    },
+    {
+      "id": "software-knowledge-boundary",
+      "skill": "engineering",
+      "split": "validation",
+      "prompt_file": "cases/software/knowledge-boundary/prompt.md",
+      "fixture_dir": "cases/software/knowledge-boundary/fixture",
+      "verifier": {
+        "argv": [
+          "python3",
+          "cases/software/knowledge-boundary/oracle/verify.py"
+        ],
+        "required_tools": [],
+        "timeout_seconds": 15
+      },
+      "context_files": [
+        "skills/engineering/SKILL.md"
+      ],
+      "timeout_seconds": 300,
+      "critical_expectations": [
+        "cancellation-restores-owned-state",
+        "independent-policy-divergence",
+        "public-call-contract",
+        "owner-encapsulation"
+      ],
+      "comparator_contract": {
+        "requirements": [
+          {
+            "id": "cancellation-restores-owned-state",
+            "kind": "required_behavior",
+            "text": "The first cancellation of a complete order must return true, restore exactly its reserved units and charged cents, and leave other orders unchanged; unknown, repeated, reservation-only, and charge-only cancellations must return false without changing either owner."
+          },
+          {
+            "id": "independent-policy-divergence",
+            "kind": "required_behavior",
+            "text": "After cancellation, Inventory must remove the released reservation so its order ID can be reserved again, while GiftCards must retain refunded charge history and reject another charge for the same order ID without changing the balance."
+          },
+          {
+            "id": "public-call-contract",
+            "kind": "hard_constraint",
+            "text": "Checkout.cancel must have exact signature (self, order_id), and all existing Inventory, GiftCards, and Checkout public signatures and behavior must remain compatible."
+          },
+          {
+            "id": "owner-encapsulation",
+            "kind": "hard_constraint",
+            "text": "Inventory and GiftCards must implement their own state transitions behind public owner methods; Checkout may coordinate only through those methods and must not reach into owner internals. The owners must not share an adjustment helper or policy, production changes must stay in the three existing files, tests must remain production-unreachable, and no dependency may be added."
+          }
+        ],
+        "performance_basis": null,
+        "qualitative_bases": {}
+      }
+    },
+    {
+      "id": "software-domain-simplicity",
+      "skill": "engineering",
+      "split": "validation",
+      "prompt_file": "cases/software/domain-simplicity/prompt.md",
+      "fixture_dir": "cases/software/domain-simplicity/fixture",
+      "verifier": {
+        "argv": [
+          "python3",
+          "cases/software/domain-simplicity/oracle/verify.py"
+        ],
+        "required_tools": [],
+        "timeout_seconds": 10
+      },
+      "context_files": [
+        "skills/engineering/SKILL.md"
+      ],
+      "timeout_seconds": 300,
+      "critical_expectations": [
+        "return-policy-behavior",
+        "legacy-refund-contract",
+        "public-call-contract",
+        "domain-policy-placement"
+      ],
+      "comparator_contract": {
+        "requirements": [
+          {
+            "id": "return-policy-behavior",
+            "kind": "required_behavior",
+            "text": "refund_cents must reject non-boolean flags with TypeError, refund a defective item in full regardless of age or final-sale status, deny a non-defective final-sale item, and otherwise apply the inclusive 30-day window."
+          },
+          {
+            "id": "legacy-refund-contract",
+            "kind": "required_behavior",
+            "text": "Existing two-argument calls must retain exact refund values, including the inclusive day-30 boundary, and negative paid_cents or days_since_delivery must retain ValueError."
+          },
+          {
+            "id": "public-call-contract",
+            "kind": "hard_constraint",
+            "text": "refund_cents must keep paid_cents and days_since_delivery as its two positional parameters and add final_sale=False and defective=False as keyword-only parameters."
+          },
+          {
+            "id": "domain-policy-placement",
+            "kind": "hard_constraint",
+            "text": "The production policy must remain in the existing refund_cents function in returns.py: no production classes, extra top-level policy functions, extra production modules, dependency manifests, third-party imports, or production-reachable test code; isolated tests may remain separate."
+          }
+        ],
+        "performance_basis": null,
+        "qualitative_bases": {}
+      }
+    },
+    {
+      "id": "testing-oracle-sensitivity",
+      "skill": "testing",
+      "split": "train",
+      "prompt_file": "cases/testing/oracle-sensitivity/prompt.md",
+      "fixture_dir": "cases/testing/oracle-sensitivity/fixture",
+      "verifier": {
+        "argv": [
+          "python3",
+          "cases/testing/oracle-sensitivity/oracle/verify.py"
+        ],
+        "required_tools": [],
+        "timeout_seconds": 180
+      },
+      "context_files": [
+        "skills/testing/SKILL.md"
+      ],
+      "timeout_seconds": 300,
+      "critical_expectations": [
+        "tests-only-change",
+        "non-vacuous-tests",
+        "correct-code-passes",
+        "targeted-defects-rejected"
+      ],
+      "comparator_contract": {
+        "requirements": [
+          {
+            "id": "tests-only-change",
+            "kind": "hard_constraint",
+            "text": "discounts.py must remain byte-for-byte unchanged; only discovered test code may change, and no dependency manifest, third-party/vendored module, or source-introspection path may be added."
+          },
+          {
+            "id": "non-vacuous-tests",
+            "kind": "required_behavior",
+            "text": "Discovered tests must execute behavioral assertions through invoice_total's public API rather than inspect production source or metadata."
+          },
+          {
+            "id": "correct-code-passes",
+            "kind": "required_behavior",
+            "text": "The suite must pass the supplied implementation and equivalent implementations that materialize the subtotal sequence or express the zero floor with an equivalent conditional."
+          },
+          {
+            "id": "targeted-defects-rejected",
+            "kind": "required_behavior",
+            "text": "Assertion failures must detect ignored quantities, tax computed before coupon application, truncation instead of half-up cent rounding, and removal of the zero floor; syntax/import/timeout failures do not count."
+          }
+        ],
+        "performance_basis": null,
+        "qualitative_bases": {}
+      }
+    },
+    {
+      "id": "testing-parser-boundaries",
+      "skill": "testing",
+      "split": "train",
+      "prompt_file": "cases/testing/parser-boundaries/prompt.md",
+      "fixture_dir": "cases/testing/parser-boundaries/fixture",
+      "verifier": {
+        "argv": [
+          "python3",
+          "cases/testing/parser-boundaries/oracle/verify.py"
+        ],
+        "required_tools": [
+          "go"
+        ],
+        "timeout_seconds": 1500
+      },
+      "context_files": [
+        "skills/testing/SKILL.md"
+      ],
+      "timeout_seconds": 300,
+      "critical_expectations": [
+        "tests-only-change",
+        "generated-boundary-exercise",
+        "correct-code-passes",
+        "parser-defects-rejected"
+      ],
+      "comparator_contract": {
+        "requirements": [
+          {
+            "id": "tests-only-change",
+            "kind": "hard_constraint",
+            "text": "frame.go and go.mod must remain byte-for-byte unchanged; only Go test files may change, with no external module/workspace state, build directives, non-Go build inputs, vendored dependency, TestMain control, or production-source inspection."
+          },
+          {
+            "id": "generated-boundary-exercise",
+            "kind": "required_behavior",
+            "text": "Tests must drive ParseFrame through public byte-slice inputs covering short, unsupported-version, length, maximum-payload, checksum, trailing-byte, and returned-payload-ownership boundaries without reading implementation source."
+          },
+          {
+            "id": "correct-code-passes",
+            "kind": "required_behavior",
+            "text": "The suite must pass the supplied implementation and equivalent implementations using an explicit-capacity payload copy or an equivalent version guard."
+          },
+          {
+            "id": "parser-defects-rejected",
+            "kind": "required_behavior",
+            "text": "Assertion failures must detect acceptance of trailing bytes, ignored checksum mismatch, returned payload aliasing, and acceptance above MaxPayload; build/import/timeout failures do not count."
+          }
+        ],
+        "performance_basis": null,
+        "qualitative_bases": {}
+      }
+    },
+    {
+      "id": "testing-state-machine-sequences",
+      "skill": "testing",
+      "split": "train",
+      "prompt_file": "cases/testing/state-machine-sequences/prompt.md",
+      "fixture_dir": "cases/testing/state-machine-sequences/fixture",
+      "verifier": {
+        "argv": [
+          "python3",
+          "cases/testing/state-machine-sequences/oracle/verify.py"
+        ],
+        "required_tools": [
+          "node"
+        ],
+        "timeout_seconds": 180
+      },
+      "context_files": [
+        "skills/testing/SKILL.md"
+      ],
+      "timeout_seconds": 300,
+      "critical_expectations": [
+        "tests-only-change",
+        "sequence-contract-covered",
+        "correct-code-passes",
+        "transition-defects-rejected"
+      ],
+      "comparator_contract": {
+        "requirements": [
+          {
+            "id": "tests-only-change",
+            "kind": "hard_constraint",
+            "text": "subscription.js and package.json must remain byte-for-byte unchanged; only tests may change, with no dependency/lockfile/node_modules addition or production-source introspection."
+          },
+          {
+            "id": "sequence-contract-covered",
+            "kind": "required_behavior",
+            "text": "Tests must exercise valid and invalid public Subscription sequences, return values, final state, and ordered event history, including repeated cancellation, without inspecting private implementation."
+          },
+          {
+            "id": "correct-code-passes",
+            "kind": "required_behavior",
+            "text": "The suite must pass the supplied implementation and equivalent event-copy and pause-guard implementations."
+          },
+          {
+            "id": "transition-defects-rejected",
+            "kind": "required_behavior",
+            "text": "Assertion failures must detect pausing from trial, resuming after cancellation, reporting a repeated cancellation as successful, and failing to record resume; syntax/import/timeout failures do not count."
+          }
+        ],
+        "performance_basis": null,
+        "qualitative_bases": {}
+      }
+    },
+    {
+      "id": "testing-real-boundary-fidelity",
+      "skill": "testing",
+      "split": "train",
+      "prompt_file": "cases/testing/real-boundary-fidelity/prompt.md",
+      "fixture_dir": "cases/testing/real-boundary-fidelity/fixture",
+      "verifier": {
+        "argv": [
+          "python3",
+          "cases/testing/real-boundary-fidelity/oracle/verify.py"
+        ],
+        "required_tools": [],
+        "timeout_seconds": 220
+      },
+      "context_files": [
+        "skills/testing/SKILL.md"
+      ],
+      "timeout_seconds": 300,
+      "critical_expectations": [
+        "tests-only-change",
+        "real-boundary-exercised",
+        "correct-code-passes",
+        "boundary-defects-rejected"
+      ],
+      "comparator_contract": {
+        "requirements": [
+          {
+            "id": "tests-only-change",
+            "kind": "hard_constraint",
+            "text": "registry.py must remain byte-for-byte unchanged; only tests may change, with no dependency manifest, third-party/vendored module, or production-source inspection."
+          },
+          {
+            "id": "real-boundary-exercised",
+            "kind": "required_behavior",
+            "text": "Tests must construct a real sqlite3 connection and exercise UserRegistry's public add/find behavior, normalization, persistence, duplicate handling, and exact lookup rather than substitute a hand-written connection fake."
+          },
+          {
+            "id": "correct-code-passes",
+            "kind": "required_behavior",
+            "text": "The suite must pass the supplied implementation and equivalent email-normalization and row-mapping implementations."
+          },
+          {
+            "id": "boundary-defects-rejected",
+            "kind": "required_behavior",
+            "text": "Assertion failures must detect omitted commit, omitted email normalization, replacement rather than rejection of a duplicate, and wildcard rather than exact lookup; syntax/import/timeout failures do not count."
+          }
+        ],
+        "performance_basis": null,
+        "qualitative_bases": {}
+      }
+    },
+    {
+      "id": "testing-concurrency-flake",
+      "skill": "testing",
+      "split": "train",
+      "prompt_file": "cases/testing/concurrency-flake/prompt.md",
+      "fixture_dir": "cases/testing/concurrency-flake/fixture",
+      "verifier": {
+        "argv": [
+          "python3",
+          "cases/testing/concurrency-flake/oracle/verify.py"
+        ],
+        "required_tools": [
+          "as",
+          "gcc",
+          "go",
+          "ld"
+        ],
+        "timeout_seconds": 1500
+      },
+      "context_files": [
+        "skills/testing/SKILL.md"
+      ],
+      "timeout_seconds": 300,
+      "critical_expectations": [
+        "tests-only-change",
+        "deterministic-test-synchronization",
+        "race-clean-repeated-pass",
+        "order-independent-contract",
+        "concurrency-defects-rejected"
+      ],
+      "comparator_contract": {
+        "requirements": [
+          {
+            "id": "tests-only-change",
+            "kind": "hard_constraint",
+            "text": "squares.go and go.mod must remain byte-for-byte unchanged; only Go test files may change, with no external module/workspace state, vendored dependency, build directive, TestMain control, or production-source inspection."
+          },
+          {
+            "id": "deterministic-test-synchronization",
+            "kind": "required_behavior",
+            "text": "Test success must be driven by consuming the result channel through closure and exact multiset assertions, never by sleep, polling, default-select timing, or elapsed-time assumptions; a fail-only hang bound may not create a passing result."
+          },
+          {
+            "id": "race-clean-repeated-pass",
+            "kind": "required_behavior",
+            "text": "The complete suite must pass twenty repetitions under go test -race without timeout, output overflow, or race report."
+          },
+          {
+            "id": "order-independent-contract",
+            "kind": "required_behavior",
+            "text": "The tests must pass both ordered and reversed valid producer schedules because result order is unspecified."
+          },
+          {
+            "id": "concurrency-defects-rejected",
+            "kind": "required_behavior",
+            "text": "Assertion failures must detect a dropped result, duplicated results, returning the input instead of its square, and sign-negated squares; build/import/timeout failures do not count."
+          }
+        ],
+        "performance_basis": null,
+        "qualitative_bases": {}
+      }
+    },
+    {
+      "id": "testing-legacy-characterization",
+      "skill": "testing",
+      "split": "validation",
+      "prompt_file": "cases/testing/legacy-characterization/prompt.md",
+      "fixture_dir": "cases/testing/legacy-characterization/fixture",
+      "verifier": {
+        "argv": [
+          "python3",
+          "cases/testing/legacy-characterization/oracle/verify.py"
+        ],
+        "required_tools": [],
+        "timeout_seconds": 180
+      },
+      "context_files": [
+        "skills/testing/SKILL.md"
+      ],
+      "timeout_seconds": 300,
+      "critical_expectations": [
+        "tests-only-change",
+        "owned-contract-characterized",
+        "current-code-passes",
+        "confirmed-defect-not-frozen",
+        "contract-regressions-rejected"
+      ],
+      "comparator_contract": {
+        "requirements": [
+          {
+            "id": "tests-only-change",
+            "kind": "hard_constraint",
+            "text": "legacy_billing.py and SUPPORT_NOTES.md must remain byte-for-byte unchanged; only tests may change, with no dependency manifest, third-party/vendored module, or production-source inspection."
+          },
+          {
+            "id": "owned-contract-characterized",
+            "kind": "required_behavior",
+            "text": "Tests must encode the support-owned contract: standard accounts cost 5 cents per unit; founder accounts receive exactly 100 units then cost 2 cents per additional unit; unknown tiers fail."
+          },
+          {
+            "id": "current-code-passes",
+            "kind": "required_behavior",
+            "text": "The suite must pass the current implementation for supported non-negative behavior."
+          },
+          {
+            "id": "confirmed-defect-not-frozen",
+            "kind": "required_behavior",
+            "text": "The suite must also pass valid implementations that reject negative corrections, so the documented negative-charge defect is not asserted as permanent behavior."
+          },
+          {
+            "id": "contract-regressions-rejected",
+            "kind": "required_behavior",
+            "text": "Assertion failures must detect a founder threshold of 99, founder rate of 3, removal of the founder allowance, and standard rate of 4; syntax/import/timeout failures do not count."
+          }
+        ],
+        "performance_basis": null,
+        "qualitative_bases": {}
+      }
+    },
+    {
+      "id": "testing-event-idempotency",
+      "skill": "testing",
+      "split": "validation",
+      "prompt_file": "cases/testing/event-idempotency/prompt.md",
+      "fixture_dir": "cases/testing/event-idempotency/fixture",
+      "verifier": {
+        "argv": [
+          "python3",
+          "cases/testing/event-idempotency/oracle/verify.py"
+        ],
+        "required_tools": [
+          "node"
+        ],
+        "timeout_seconds": 220
+      },
+      "context_files": [
+        "skills/testing/SKILL.md"
+      ],
+      "timeout_seconds": 300,
+      "critical_expectations": [
+        "tests-only-change",
+        "delivery-contract-covered",
+        "correct-code-passes",
+        "delivery-defects-rejected"
+      ],
+      "comparator_contract": {
+        "requirements": [
+          {
+            "id": "tests-only-change",
+            "kind": "hard_constraint",
+            "text": "ledger.js and package.json must remain byte-for-byte unchanged; only tests may change, with no dependency/lockfile/node_modules addition or production-source introspection."
+          },
+          {
+            "id": "delivery-contract-covered",
+            "kind": "required_behavior",
+            "text": "Tests must exercise duplicate event IDs, stale delivery, buffering and draining contiguous out-of-order sequences, and independent per-account sequence/balance state through LedgerProjection's public API."
+          },
+          {
+            "id": "correct-code-passes",
+            "kind": "required_behavior",
+            "text": "The suite must pass the supplied implementation and equivalent pending-key copy and draining-loop implementations."
+          },
+          {
+            "id": "delivery-defects-rejected",
+            "kind": "required_behavior",
+            "text": "Assertion failures must detect duplicate reapplication, discarded out-of-order delivery, draining only one now-contiguous event, and sharing one global sequence across accounts; syntax/import/timeout failures do not count."
+          }
+        ],
+        "performance_basis": null,
+        "qualitative_bases": {}
+      }
+    }
+  ]
+}

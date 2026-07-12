@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "must_pass": [
+    "valid-archive-behavior",
+    "standard-library-only",
+    "path-containment",
+    "unsupported-member-types",
+    "duplicate-member-defense",
+    "declared-resource-limits",
+    "bounded-entry-consumption",
+    "invalid-archive-atomicity",
+    "publication-failure-atomicity",
+    "public-call-contract"
+  ],
+  "must_fail": ["existing-destination-preserved"]
+}

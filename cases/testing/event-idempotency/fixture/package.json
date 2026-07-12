@@ -1,0 +1,7 @@
+{
+  "name": "ledger-projection-eval",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  }
+}

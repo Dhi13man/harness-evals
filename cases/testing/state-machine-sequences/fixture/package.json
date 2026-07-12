@@ -1,0 +1,7 @@
+{
+  "name": "subscription-state-eval",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  }
+}

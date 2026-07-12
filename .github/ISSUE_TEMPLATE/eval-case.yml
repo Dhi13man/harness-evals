@@ -1,0 +1,48 @@
+name: Evaluation case proposal
+description: Propose a calibrated software engineering or testing case.
+title: "case: "
+labels:
+  - evaluation-case
+body:
+  - type: input
+    id: capability
+    attributes:
+      label: Capability and failure mode
+      description: Name the behavior or risk the case should distinguish.
+    validations:
+      required: true
+  - type: textarea
+    id: contract
+    attributes:
+      label: Observable contract
+      description: Define success, boundaries, failures, compatibility, and any performance or security constraints.
+    validations:
+      required: true
+  - type: textarea
+    id: oracle
+    attributes:
+      label: Independent oracle
+      description: Explain how the verifier can judge the contract without reproducing or trusting candidate logic.
+    validations:
+      required: true
+  - type: textarea
+    id: calibration
+    attributes:
+      label: Calibration variants
+      description: List known-good, known-bad, and adversarial implementations and the exact assertions each should pass or fail.
+    validations:
+      required: true
+  - type: textarea
+    id: portability
+    attributes:
+      label: Runtime and portability
+      description: List tools, versions, time limits, resource limits, platform assumptions, and deterministic controls.
+    validations:
+      required: true
+  - type: checkboxes
+    id: rights
+    attributes:
+      label: Contribution rights
+      options:
+        - label: I can submit the proposed prompt, fixture, and calibration material under the MIT License.
+          required: true

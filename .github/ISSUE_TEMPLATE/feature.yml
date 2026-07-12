@@ -1,0 +1,34 @@
+name: Feature proposal
+description: Propose a focused evaluator, provider, compatibility, or contributor-experience improvement.
+title: "feat: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the concrete limitation or failure mode without prescribing a solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed contract
+      description: Describe observable behavior, ownership boundary, compatibility impact, and how success can be verified.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and scope
+      description: State simpler alternatives considered and what this proposal intentionally excludes.
+    validations:
+      required: true
+  - type: textarea
+    id: risks
+    attributes:
+      label: Trust, cost, and maintenance risks
+      description: Cover isolation, authority, spend, nondeterminism, dependencies, and long-term ownership as applicable.
+    validations:
+      required: true

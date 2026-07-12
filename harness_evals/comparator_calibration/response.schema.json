@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "response.schema.json",
+  "x-artifact-version": "2.3.0",
+  "title": "Locked comparator response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["checks", "admissibility", "criteria"],
+  "properties": {
+    "checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["A", "B"],
+      "properties": {
+        "A": {
+          "$ref": "#/$defs/checks"
+        },
+        "B": {
+          "$ref": "#/$defs/checks"
+        }
+      }
+    },
+    "admissibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["A", "B"],
+      "properties": {
+        "A": {"$ref": "#/$defs/admissibilityDecision"},
+        "B": {"$ref": "#/$defs/admissibilityDecision"}
+      }
+    },
+    "criteria": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "functional_correctness",
+            "security_reliability",
+            "maintainability_extensibility",
+            "performance_efficiency",
+            "simplicity_scope_discipline"
+          ],
+          "properties": {
+        "functional_correctness": {
+          "$ref": "#/$defs/criterion"
+        },
+        "security_reliability": {
+          "$ref": "#/$defs/criterion"
+        },
+        "maintainability_extensibility": {
+          "$ref": "#/$defs/criterion"
+        },
+        "performance_efficiency": {
+          "$ref": "#/$defs/criterion"
+        },
+            "simplicity_scope_discipline": {
+              "$ref": "#/$defs/criterion"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact",
+        "path",
+        "line_start",
+        "line_end",
+        "quote",
+        "semantic_anchor",
+        "observation"
+      ],
+      "properties": {
+        "artifact": {
+          "enum": ["A", "B", "both", "contract"],
+          "description": "A/B/both cite reconstructed post-patch files for the presented candidates; contract cites one controlled contract artifact."
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Candidate-relative reconstructed file path, or contract/task, contract/requirements/<id>, contract/performance_basis, or contract/qualitative_bases/<criterion>."
+        },
+        "line_start": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "One-based inclusive first line in the exact referenced artifact bytes."
+        },
+        "line_end": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "One-based inclusive last line in the exact referenced artifact bytes."
+        },
+        "quote": {
+          "type": "string",
+          "minLength": 3,
+          "description": "Exact lexical substring present in every cited line range and repeated verbatim in observation."
+        },
+        "semantic_anchor": {
+          "type": "string",
+          "pattern": "^(requirement|criterion):[a-z0-9][a-z0-9_-]*:(satisfied|violated|unknown|A|B|tie)$",
+          "description": "Typed requirement/status or criterion/winner anchor repeated verbatim in observation."
+        },
+        "observation": {
+          "type": "string",
+          "minLength": 20
+        }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requirement_id", "status", "evidence"],
+        "properties": {
+          "requirement_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "status": {
+            "enum": ["satisfied", "violated", "unknown"]
+          },
+          "evidence": {
+            "$ref": "#/$defs/evidence"
+          }
+        }
+      }
+    },
+    "admissibilityDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision", "violation_ids"],
+      "properties": {
+        "decision": {
+          "enum": ["eligible", "ineligible", "unknown"]
+        },
+        "violation_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          }
+        }
+      }
+    },
+    "criterion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["winner", "evidence"],
+      "properties": {
+        "winner": {
+          "enum": ["A", "B", "tie"]
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        }
+      }
+    }
+  }
+}

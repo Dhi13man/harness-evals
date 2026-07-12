@@ -1,0 +1,36 @@
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+auth.json
+credentials.json
+
+# Private and live evaluation material
+.codex-diagnostic*.json
+*holdout-plan*.json
+!holdout-plan.schema.json
+*consumption-record*.json
+calibration-evidence*.json
+results/
+evidence/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.coverage
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.tox/
+.venv/
+venv/
+
+# Builds and editors
+build/
+dist/
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.tmp

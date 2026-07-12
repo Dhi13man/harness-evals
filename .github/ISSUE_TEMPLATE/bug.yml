@@ -1,0 +1,68 @@
+name: Bug report
+description: Report a reproducible evaluator, provider, oracle, packaging, or documentation defect.
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: Do not include credentials, private holdout content, live evidence, proprietary source, or security vulnerabilities. Follow SECURITY.md for private reports.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Package version or exact commit.
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Runner or manifest
+        - Case or oracle
+        - Claude provider
+        - Codex provider
+        - Comparator calibration
+        - Holdout or release authority
+        - Packaging or CI
+        - Documentation
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include sanitized manifest fragments, exact commands, and the smallest failing case selection.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and evidence
+      description: Include exit status and sanitized output. Do not paste secrets or private paths.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Linux distribution, Python, Git, Go, Node, provider executable, model, and systemd user-manager details as applicable.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and removed sensitive data.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

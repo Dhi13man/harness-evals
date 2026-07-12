@@ -1,0 +1,63 @@
+{
+  "rubric_id": "software-engineering-comparator-rubric-v3",
+  "version": "2.3.0",
+  "criteria": [
+    {
+      "id": "functional_correctness",
+      "definition": "Observable behavior satisfies the complete controlled task and contract for valid, boundary, and failure inputs."
+    },
+    {
+      "id": "security_reliability",
+      "definition": "The change preserves trust boundaries, safety invariants, atomicity, concurrency correctness, and deterministic failure behavior."
+    },
+    {
+      "id": "maintainability_extensibility",
+      "definition": "The change is clear, locally coherent, convention-compatible, and proportionate to evidenced future variation."
+    },
+    {
+      "id": "performance_efficiency",
+      "definition": "Only explicit workloads, demonstrated asymptotic differences, or supplied measurements can establish a material winner."
+    },
+    {
+      "id": "simplicity_scope_discipline",
+      "definition": "The change uses the least machinery that satisfies the full contract without unrelated edits or speculative infrastructure."
+    }
+  ],
+  "admissibility": {
+    "eligible": "Every required behavior and hard constraint is satisfied.",
+    "ineligible": "At least one required behavior or hard constraint is violated.",
+    "unknown": "At least one requirement cannot be determined from supplied artifacts and none is proven violated."
+  },
+  "outcome_rule": {
+    "eligible_vs_ineligible": "The eligible candidate wins.",
+    "both_eligible": "Apply Pareto comparison across material criterion decisions; criteria are applicable and scored only in this state.",
+    "criteria_not_applicable": "Use null criteria whenever either candidate is ineligible or unknown; the mechanical outcome uses eligibility only.",
+    "neither_or_unknown": "Return unqualified.",
+    "pareto": {
+      "only_a_and_ties": "A",
+      "only_b_and_ties": "B",
+      "all_ties": "tie",
+      "a_and_b": "tradeoff"
+    }
+  },
+  "production_decisive_policy": {
+    "functional_correctness": "tie-only-until-calibration-support-expands",
+    "security_reliability": "tie-only-until-calibration-support-expands",
+    "maintainability_extensibility": "decisive",
+    "performance_efficiency": "decisive-when-typed-basis-exists",
+    "simplicity_scope_discipline": "decisive"
+  },
+  "evidence": {
+    "minimum_observation_characters": 20,
+    "required_fields": [
+      "artifact",
+      "path",
+      "line_start",
+      "line_end",
+      "quote",
+      "semantic_anchor",
+      "observation"
+    ],
+    "rule": "Evidence must cite a bounded one-based inclusive line range in reconstructed candidate bytes or a controlled contract field, quote exact lexical bytes from that range, provide the exact typed requirement/status or criterion/winner semantic anchor, repeat both quote and semantic anchor in the observation, and explain the implication; labels, verdicts, unrelated prose, and unbounded line claims are not evidence."
+  }
+}

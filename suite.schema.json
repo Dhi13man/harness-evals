@@ -1,0 +1,539 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Dhi13man/harness-evals/blob/main/suite.schema.json",
+  "title": "Harness Evals software engineering and testing suite",
+  "description": "Manifest for isolated, blinded instruction-bundle evaluations across coding harness providers.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "suite_id",
+    "seed",
+    "repository_root",
+    "provider",
+    "comparator",
+    "variants",
+    "comparisons",
+    "cases"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "suite_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "seed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "repository_root": {
+      "$ref": "#/$defs/relativePath"
+    },
+    "provider": {
+      "$ref": "#/$defs/provider"
+    },
+    "comparator": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/provider"
+        },
+        {
+          "not": {
+            "properties": {
+              "kind": {
+                "const": "codex"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          }
+        }
+      ]
+    },
+    "variants": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "$ref": "#/$defs/variant"
+      }
+    },
+    "comparisons": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/comparison"
+      }
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/case"
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "$comment": "The runner resolves this relative to the field's declared root. Case paths and context paths may not escape; repository and worktree roots may use parent traversal."
+    },
+    "suiteFilePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!\\./)(?!.*//)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*\\/$).+$"
+    },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "model",
+        "timeout_seconds"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "claude",
+            "codex",
+            "fake"
+          ]
+        },
+        "executable": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "max_budget_usd": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "reasoning_effort": {
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ]
+        },
+        "billing_basis": {
+          "enum": [
+            "metered_api",
+            "chatgpt_subscription"
+          ]
+        },
+        "protocol_lock": {
+          "$ref": "#/$defs/suiteFilePath"
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "claude"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "executable",
+              "max_budget_usd"
+            ],
+            "properties": {
+              "billing_basis": {
+                "const": "metered_api"
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "reasoning_effort"
+                  ]
+                },
+                {
+                  "required": [
+                    "protocol_lock"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "fake"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "billing_basis": {
+                "const": "metered_api"
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "reasoning_effort"
+                  ]
+                },
+                {
+                  "required": [
+                    "protocol_lock"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "codex"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "executable",
+              "reasoning_effort",
+              "billing_basis",
+              "protocol_lock"
+            ],
+            "properties": {
+              "model": {
+                "enum": [
+                  "gpt-5.6-luna",
+                  "gpt-5.6-terra"
+                ]
+              },
+              "billing_basis": {
+                "const": "chatgpt_subscription"
+              }
+            },
+            "not": {
+              "required": [
+                "max_budget_usd"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "codex"
+              },
+              "model": {
+                "const": "gpt-5.6-luna"
+              }
+            },
+            "required": [
+              "kind",
+              "model"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reasoning_effort": {
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "variant": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "kind"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "kind": {
+              "const": "without_skill"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "kind",
+            "git_ref"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "kind": {
+              "const": "git_ref"
+            },
+            "git_ref": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "kind",
+            "root",
+            "source_ref"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "kind": {
+              "const": "worktree"
+            },
+            "root": {
+              "$ref": "#/$defs/relativePath"
+            },
+            "source_ref": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ]
+    },
+    "comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "control",
+        "treatment",
+        "repetitions",
+        "comparator_order"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "control": {
+          "$ref": "#/$defs/identifier"
+        },
+        "treatment": {
+          "$ref": "#/$defs/identifier"
+        },
+        "repetitions": {
+          "const": 3
+        },
+        "comparator_order": {
+          "const": "ab_ba"
+        }
+      }
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "skill",
+        "split",
+        "prompt_file",
+        "fixture_dir",
+        "verifier",
+        "context_files",
+        "timeout_seconds",
+        "critical_expectations",
+        "comparator_contract"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "skill": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "split": {
+          "enum": [
+            "train",
+            "validation",
+            "holdout"
+          ]
+        },
+        "prompt_file": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "fixture_dir": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "verifier": {
+          "$ref": "#/$defs/verifier"
+        },
+        "context_files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/relativePath"
+          },
+          "uniqueItems": true
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600
+        },
+        "critical_expectations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/identifier"
+          },
+          "uniqueItems": true
+        },
+        "comparator_contract": {
+          "$ref": "#/$defs/comparatorContract"
+        }
+      }
+    },
+    "comparatorContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requirements",
+        "performance_basis",
+        "qualitative_bases"
+      ],
+      "properties": {
+        "requirements": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "kind", "text"],
+            "properties": {
+              "id": {"$ref": "#/$defs/identifier"},
+              "kind": {"enum": ["required_behavior", "hard_constraint"]},
+              "text": {"type": "string", "minLength": 20}
+            }
+          }
+        },
+        "performance_basis": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "detail"],
+              "properties": {
+                "kind": {"enum": ["workload", "asymptotic", "measurement"]},
+                "detail": {"type": "string", "minLength": 20}
+              }
+            }
+          ]
+        },
+        "qualitative_bases": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "functional_correctness": {"$ref": "#/$defs/qualitativeBasis"},
+            "security_reliability": {"$ref": "#/$defs/qualitativeBasis"}
+          }
+        }
+      }
+    },
+    "qualitativeBasis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "detail"],
+      "properties": {
+        "kind": {
+          "enum": [
+            "test-fault-sensitivity",
+            "behavioral-quality",
+            "defense-in-depth",
+            "failure-determinism",
+            "concurrency-margin"
+          ]
+        },
+        "detail": {"type": "string", "minLength": 20}
+      }
+    },
+    "verifier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "argv",
+        "timeout_seconds",
+        "required_tools"
+      ],
+      "properties": {
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600
+        },
+        "required_tools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._+-]*$"
+          },
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}

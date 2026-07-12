@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "must_pass": [
+    "cancellation-restores-owned-state",
+    "independent-policy-divergence",
+    "public-call-contract",
+    "owner-encapsulation"
+  ],
+  "must_fail": []
+}

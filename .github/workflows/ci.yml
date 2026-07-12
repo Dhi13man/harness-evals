@@ -1,0 +1,177 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+      - name: Install quality tools
+        run: python -m pip install ruff==0.15.21
+      - name: Lint Python
+        run: ruff check .
+      - name: Check Python formatting
+        run: ruff format --check .
+      - name: Compile Python
+        run: python -m compileall -q harness_evals cases tests
+      - name: Validate JSON syntax
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          def unique(path, pairs):
+              value = {}
+              for key, item in pairs:
+                  if key in value:
+                      raise ValueError(f"duplicate key {key!r} in {path}")
+                  value[key] = item
+              return value
+
+          for path in sorted(Path(".").rglob("*.json")):
+              if any(part in {".git", ".venv", "build", "dist"} for part in path.parts):
+                  continue
+              with path.open(encoding="utf-8") as handle:
+                  json.load(handle, object_pairs_hook=lambda pairs: unique(path, pairs))
+          PY
+      - name: Check Markdown formatting
+        run: npx --yes prettier@3.9.5 --check "**/*.md" --prose-wrap never
+      - name: Lint Markdown
+        run: npx --yes markdownlint-cli2@0.23.0 "**/*.md" "#build" "#dist" "#.venv"
+
+  unit:
+    name: Unit / Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.11"
+          - "3.12"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: "1.22.x"
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+      - name: Run harness tests
+        run: python -m unittest discover -s tests -v
+      - name: Run comparator tests
+        run: python -m unittest discover -s harness_evals/comparator_calibration/tests -v
+      - name: Run shared verifier tests
+        run: python -m unittest discover -s cases/testing/tests -v
+
+  calibration:
+    name: Calibration / ${{ matrix.track }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        track:
+          - software
+          - testing
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: "1.22.x"
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+      - name: Calibrate ${{ matrix.track }} cases
+        run: python cases/${{ matrix.track }}/calibrate.py
+
+  package:
+    name: Package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Build distributions
+        run: |
+          python -m pip install build==1.5.1
+          python -m build
+      - name: Install wheel and smoke test entry points
+        run: |
+          python -m venv /tmp/harness-evals-smoke
+          /tmp/harness-evals-smoke/bin/python -m pip install dist/*.whl
+          /tmp/harness-evals-smoke/bin/harness-evals --help
+          /tmp/harness-evals-smoke/bin/python -m harness_evals --help
+          /tmp/harness-evals-smoke/bin/harness-evals-prepare-holdout --help
+      - name: Upload distributions
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: distributions
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  dependency-review:
+    name: Dependency Review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0

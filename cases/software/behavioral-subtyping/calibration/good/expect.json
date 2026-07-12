@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "must_pass": [
+    "configured-free-policy",
+    "behavioral-substitutability",
+    "existing-policy-contract",
+    "evaluation-independent-behavior",
+    "bounded-production-scope"
+  ],
+  "must_fail": []
+}
