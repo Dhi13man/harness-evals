@@ -602,6 +602,30 @@ class SuiteFixture:
         self._use_adapter(self.manifest["provider"])
         self.save_manifest()
 
+    def use_v7_objective(
+        self,
+        artifact_kind: str,
+        comparison_ids: tuple[str, ...] = ("without-current", "old-current"),
+        bundle_source: str = "skills/demo",
+    ) -> None:
+        self.use_v6_objective(comparison_ids, bundle_source)
+        self.manifest["schema_version"] = 7
+        for case in self.manifest["cases"]:
+            case["artifact_contract"] = {"kind": artifact_kind}
+        self.save_manifest()
+
+    def use_v7_judged(
+        self,
+        artifact_kind: str,
+        comparison_ids: tuple[str, ...] = ("without-current", "old-current"),
+        bundle_source: str = "skills/demo",
+    ) -> None:
+        self.use_v6_judged(comparison_ids, bundle_source)
+        self.manifest["schema_version"] = 7
+        for case in self.manifest["cases"]:
+            case["artifact_contract"] = {"kind": artifact_kind}
+        self.save_manifest()
+
     def isolate_basic_case(self) -> None:
         case_root = "cases/basic"
         self._write_suite(f"{case_root}/prompt.md", "Fix and verify the result.\n")
@@ -2918,6 +2942,55 @@ print(json.dumps({
                     for item in arm["verifier"]["sandbox"]["properties"]
                 )
             )
+
+    def test_malformed_declared_output_stops_before_verifier_and_comparator(
+        self,
+    ) -> None:
+        self.fixture.use_v7_objective("final_output_json")
+        provider = FakeProvider(agent_handler=lambda _request: '{"a":1,"a":2}')
+        runner = EvalRunner(self.load(), provider)
+
+        with patch.object(runner, "_run_verifier") as verifier:
+            result = runner.run(
+                RunSelection(comparison_ids=("without-current",)),
+                output_dir=self.output("malformed-final-json"),
+            )
+
+        self.assertFalse(result["passed"])
+        verifier.assert_not_called()
+        self.assertGreater(len(provider.agent_requests), 0)
+        self.assertEqual(provider.comparator_requests, [])
+        for arm in result["pairs"][0]["arms"].values():
+            self.assertEqual(arm["status"], "error")
+            self.assertEqual(arm["error_stage"], "artifact_normalization")
+            self.assertIn("duplicate key", arm["error"])
+            self.assertIsNone(arm["artifact"])
+
+    def test_judged_final_output_requires_a_calibrated_profile(self) -> None:
+        self.fixture.use_v7_judged("final_output_text")
+        provider = self.fixture.provider()
+        runner = EvalRunner(self.load(), provider, provider)
+
+        with self.assertRaisesRegex(
+            RunnerError, "comparator profile does not support.*final_output_text"
+        ):
+            runner.preflight(RunSelection(comparison_ids=("without-current",)))
+
+        self.assertEqual(provider.agent_requests, [])
+        self.assertEqual(provider.comparator_requests, [])
+
+        for case in self.fixture.manifest["cases"]:
+            case["artifact_contract"] = {"kind": "workspace_diff"}
+        self.fixture.save_manifest()
+        accepted_provider = self.fixture.provider()
+        accepted = EvalRunner(
+            self.load(), accepted_provider, accepted_provider
+        ).preflight(RunSelection(comparison_ids=("without-current",)))
+        self.assertEqual(
+            accepted["cases"][0]["artifact_contract"], {"kind": "workspace_diff"}
+        )
+        self.assertEqual(accepted_provider.agent_requests, [])
+        self.assertEqual(accepted_provider.comparator_requests, [])
 
     def test_configured_shared_verifier_is_snapshotted_and_mounted_read_only(
         self,

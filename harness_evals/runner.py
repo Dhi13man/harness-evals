@@ -1857,6 +1857,37 @@ class EvalRunner:
         self._assert_injected_fake_generator_admissible(selection, cases)
         if runtime is None and self.suite.evaluation_mode != "objective_only":
             runtime = self._load_comparator_runtime()
+        generator_artifact_kinds = set(
+            capabilities_for(
+                self.suite.provider.reviewed_adapter_id, role="generation"
+            ).artifact_outputs
+        )
+        unsupported_generator_artifacts = sorted(
+            {
+                case.artifact_contract.kind
+                for case in cases
+                if case.artifact_contract.kind not in generator_artifact_kinds
+            }
+        )
+        if unsupported_generator_artifacts:
+            raise RunnerError(
+                "generator adapter does not support selected artifact kinds: "
+                + ", ".join(unsupported_generator_artifacts)
+            )
+        if runtime is not None:
+            unsupported_profile_artifacts = sorted(
+                {
+                    case.artifact_contract.kind
+                    for case in cases
+                    if case.artifact_contract.kind
+                    not in runtime.supported_artifact_kinds
+                }
+            )
+            if unsupported_profile_artifacts:
+                raise RunnerError(
+                    "comparator profile does not support selected artifact kinds: "
+                    + ", ".join(unsupported_profile_artifacts)
+                )
         if selection.split == "holdout":
             self._assert_generator_release_authority(runtime)
         repository_commit = _git_commit(self.suite.repository_root)
@@ -1975,6 +2006,7 @@ class EvalRunner:
                         )
                     },
                     "critical_expectations": list(case.critical_expectations),
+                    "artifact_contract": {"kind": case.artifact_contract.kind},
                 }
             )
         if selection.split == "holdout":
