@@ -72,7 +72,6 @@ _HOLDOUT_COMPARISON_PROFILE = (
     ("candidate-vs-no-skill", "no-skill", "candidate"),
 )
 _HOLDOUT_COMPARISON_IDS = tuple(item[0] for item in _HOLDOUT_COMPARISON_PROFILE)
-_HOLDOUT_SKILLS = frozenset({"engineering", "testing"})
 _MIN_HOLDOUT_CASES_PER_SKILL = 8
 _HOLDOUT_VARIANT_KINDS = {
     "no-skill": "without_skill",
@@ -2471,17 +2470,12 @@ class EvalRunner:
                     "holdout candidate must resolve dynamically from worktree HEAD"
                 )
             skills = {case.skill for case in cases}
-            if skills != _HOLDOUT_SKILLS:
-                raise RunnerError(
-                    "holdout cases require exactly the engineering and testing skills"
-                )
             counts = {
-                skill: sum(case.skill == skill for case in cases)
-                for skill in _HOLDOUT_SKILLS
+                skill: sum(case.skill == skill for case in cases) for skill in skills
             }
             if any(count < _MIN_HOLDOUT_CASES_PER_SKILL for count in counts.values()):
                 raise RunnerError(
-                    "holdout requires at least 8 cases for each release skill"
+                    "holdout requires at least 8 cases for each selected skill"
                 )
         return cases, comparisons
 
@@ -3596,10 +3590,10 @@ class EvalRunner:
 
 
 def _system_context(case: CaseSpec, source: SourceMaterial) -> str:
-    common = """This is an isolated software-engineering evaluation.
+    common = """This is an isolated agent-harness evaluation.
 Work only inside the current fixture workspace. Do not inspect configuration, skills,
 memory, or repositories outside the paths explicitly supplied by this evaluation.
-Implement the user request in the fixture, run the strongest relevant local checks,
+Complete the user request in the fixture, run relevant local checks when applicable,
     and end with a concise factual summary of changes and executed verification. Never mention
     the evaluation harness or speculate about experimental roles."""
     if source.snapshot is None:
@@ -4201,6 +4195,7 @@ def _aggregate(
         (identifier, control, treatment, 3, "ab_ba")
         for identifier, control, treatment in _HOLDOUT_COMPARISON_PROFILE
     )
+    selected_skills = frozenset(case.skill for case in selected_case_specs)
     holdout_skill_counts = {
         skill: len(
             {
@@ -4211,7 +4206,7 @@ def _aggregate(
         )
         if holdout_plan is not None
         else 0
-        for skill in _HOLDOUT_SKILLS
+        for skill in selected_skills
     }
     holdout_integrity_tree_uniqueness = bool(holdout_plan) and (
         len({case.case_tree_sha256 for case in holdout_plan.cases})
@@ -4237,7 +4232,7 @@ def _aggregate(
         and selection.comparison_ids == _HOLDOUT_COMPARISON_IDS
         and holdout_profile == expected_holdout_profile
         and holdout_variant_kinds == _HOLDOUT_VARIANT_KINDS
-        and {case.skill for case in selected_case_specs} == _HOLDOUT_SKILLS
+        and bool(selected_skills)
         and holdout_integrity_tree_uniqueness
         and holdout_task_content_uniqueness
         and all(
@@ -4353,7 +4348,7 @@ def _aggregate(
     expected_candidate_cell_keys = {
         (comparison_id, skill)
         for comparison_id in _HOLDOUT_COMPARISON_IDS
-        for skill in _HOLDOUT_SKILLS
+        for skill in selected_skills
     }
     both_candidate_comparisons_present = {
         comparison.id
@@ -5064,13 +5059,14 @@ def _assert_release_task_content_uniqueness(
             "holdout release case task-content fingerprints must be globally unique; "
             "evaluation-mechanic differences are pseudoreplication"
         )
+    skills = {record["skill"] for record in case_records}
     unique_by_skill = {
         skill: {
             record["release_case_fingerprint"]
             for record in case_records
             if record["skill"] == skill
         }
-        for skill in _HOLDOUT_SKILLS
+        for skill in skills
     }
     if any(
         len(values) < _MIN_HOLDOUT_CASES_PER_SKILL
@@ -5078,7 +5074,7 @@ def _assert_release_task_content_uniqueness(
     ):
         raise RunnerError(
             "holdout requires at least 8 unique task-content fingerprints for each "
-            "release skill"
+            "selected skill"
         )
 
 

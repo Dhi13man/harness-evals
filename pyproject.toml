@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "harness-evals"
-version = "0.1.0"
-description = "Isolated, blinded software engineering and testing evaluations for coding harnesses and instruction bundles"
+version = "0.2.0"
+description = "Reproducible A/B evaluations of skills and instruction bundles through agent harnesses"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -13,7 +13,7 @@ license-files = ["LICENSE"]
 authors = [
   { name = "Dhiman Seal" },
 ]
-keywords = ["agent-evaluation", "coding-agents", "evals", "software-engineering", "testing"]
+keywords = ["a-b-testing", "agent-evaluation", "agent-harnesses", "evals", "instruction-bundles"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",

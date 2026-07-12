@@ -2,17 +2,17 @@
 
 [![CI](https://github.com/Dhi13man/harness-evals/actions/workflows/ci.yml/badge.svg)](https://github.com/Dhi13man/harness-evals/actions/workflows/ci.yml) [![CodeQL](https://github.com/Dhi13man/harness-evals/actions/workflows/codeql.yml/badge.svg)](https://github.com/Dhi13man/harness-evals/actions/workflows/codeql.yml) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Dhi13man/harness-evals/badge)](https://scorecard.dev/viewer/?uri=github.com/Dhi13man/harness-evals) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Harness Evals is an open source evaluation system for comparing software engineering and testing instruction bundles through coding harnesses. It combines isolated agent execution, objective case-specific verifiers, calibrated blinded pairwise comparison, immutable source bindings, bounded spend accounting, and review-sealed holdout support.
+Harness Evals is an open source system for running reproducible A/B evaluations of skills and instruction bundles through agent harnesses. It combines isolated agent execution, objective case-specific verifiers, calibrated blinded pairwise comparison, immutable source bindings, bounded spend accounting, and review-sealed holdout support.
 
-The evaluator is independent of any private harness configuration and does not require the skill names that motivated its first corpus. The included reference suite uses neutral `engineering` and `testing` bundle identifiers; another suite may use any valid identifier and Git repository that follows the documented `skills/<id>/SKILL.md` bundle layout. Provider adapters are the extension boundary for additional coding harnesses.
+A suite defines its own skill identifiers, tasks, fixtures, verifiers, and comparison arms. The included engineering and testing tracks are the first reference corpus, not the evaluator's domain boundary; suites may target any `skills/<id>/SKILL.md` bundle with cases that exercise its observable behavior. Harness integrations live behind provider adapters.
 
-Version `0.1.0` is an alpha release for expert evaluation work on Linux. The public corpus contains train and validation cases, not a private holdout, and the repository does not ship live comparator certification evidence or claim that one harness or bundle is superior.
+Version `0.2.0` is an alpha release for expert evaluation work on Linux. The public corpus contains train and validation cases, not a private holdout, and the repository does not ship live comparator certification evidence or claim that one harness or bundle is superior. The bundled blinded comparator is calibrated for software-change evidence; suites in other domains should use objective case verifiers or contribute a separately calibrated comparator profile rather than reusing that rubric without validation.
 
 ## What Is Included
 
-- Seventeen calibrated tasks covering implementation correctness, compatibility, security, concurrency, performance, simplicity, test-oracle sensitivity, boundary fidelity, stateful behavior, flake control, characterization, and idempotency.
+- A reference corpus of seventeen calibrated engineering and testing tasks covering implementation correctness, compatibility, security, concurrency, performance, simplicity, test-oracle sensitivity, boundary fidelity, stateful behavior, flake control, characterization, and idempotency.
 - Strict JSON manifests with duplicate-key rejection, bounded input handling, source-tree hashing, Git reference binding, and drift detection.
-- Claude CLI generation and comparison support plus a serialized Codex app-server diagnostic adapter.
+- Built-in Claude CLI generation and comparison support plus an optional serialized Codex app-server diagnostic adapter.
 - Per-case objective oracles with known-good, known-bad, and adversarial calibration variants.
 - Blinded AB/BA comparison with a locked rubric, corpus, schemas, provider identity, spend journal, and certification contract.
 - One-shot externally reviewed holdout plans that bind exact task content, source commits, provider configuration, and comparator evidence.
@@ -104,9 +104,9 @@ Case oracles must judge observable requirements, resist implementation-name and 
 
 ## Providers
 
-The built-in Claude adapter is release-authoritative when its exact executable, runtime, model, isolation properties, and live comparator certification satisfy the release locks. The Codex app-server adapter is diagnostic: it validates a pinned standalone CLI and protocol bundle, disables unrelated bundled skills, and records subscription-quota metadata, but cannot satisfy the current generator-authority gate for a release holdout.
+Built-in harness integrations conform to the `EvalProvider` contract in [harness_evals/providers.py](harness_evals/providers.py). The strict manifest parser and runner factory explicitly register supported provider kinds; adding another provider currently requires a reviewed code and schema contribution. The Claude adapter is release-authoritative when its exact executable, runtime, model, isolation properties, and live comparator certification satisfy the release locks. The optional Codex app-server adapter is diagnostic: it validates a pinned standalone CLI and protocol bundle, disables unrelated bundled skills, and records subscription-quota metadata, but cannot satisfy the current generator-authority gate for a release holdout. Neither provider determines which skill domains a suite may evaluate.
 
-New providers implement the `EvalProvider` contract in [harness_evals/providers.py](harness_evals/providers.py). Provider contributions must preserve dispatch journaling, source and request bindings, cleanup guarantees, credential isolation, cost or quota provenance, deterministic test doubles, and fail-closed authority checks.
+New provider contributions must preserve dispatch journaling, source and request bindings, cleanup guarantees, credential isolation, cost or quota provenance, deterministic test doubles, and fail-closed authority checks.
 
 ## Holdouts And Claims
 
@@ -124,7 +124,7 @@ Every non-dry holdout attempt consumes its plan before any agent or comparator c
 
 The Python package follows Semantic Versioning. Before `1.0.0`, minor versions may change the Python API or CLI with changelog and migration notes. Manifest schema versions, corpus versions, comparator protocol versions, and release-lock versions are independent compatibility surfaces and are never inferred from the package version.
 
-- Package and CLI: `0.1.0`
+- Package and CLI: `0.2.0`
 - Suite manifest schema: `2`
 - Included suite: `harness-evals-software-engineering-v1`
 - Comparator evaluator: `2.3.0`
