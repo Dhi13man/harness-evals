@@ -24,6 +24,12 @@ from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from .artifacts import (
+    MAX_ARTIFACT_BYTES,
+    ArtifactError,
+    NormalizedArtifact,
+    normalize_artifact,
+)
 from harness_evals.comparator_runtime import (
     CalibrationError,
     ComparatorRuntime,
@@ -3614,6 +3620,7 @@ class EvalRunner:
         provider_journal_state: str | None = None
         provider_entered = False
         synchronization_complete = False
+        normalized_artifact: NormalizedArtifact | None = None
         stage = "fixture_copy"
         try:
             self._assert_case_integrity(case)
@@ -3693,6 +3700,13 @@ class EvalRunner:
                 if not provider_dispatched.is_set():
                     account_dispatch()
                 provider_journal_state = "dispatched"
+                if case.artifact_contract.kind != "workspace_diff":
+                    stage = "artifact_normalization"
+                    normalized_artifact = normalize_artifact(
+                        case.artifact_contract.kind,
+                        provider_result.final_output,
+                    )
+                    stage = "agent_result"
                 provider_json = self._agent_result_json(
                     provider_result,
                     request,
@@ -3723,15 +3737,33 @@ class EvalRunner:
             diff_text = _diff_states(before, after_agent)
             hashes["diff_sha256"] = _sha256(diff_text.encode("utf-8"))
             _write_text(artifact_root / "diff.patch", diff_text)
+            if case.artifact_contract.kind == "workspace_diff":
+                stage = "artifact_normalization"
+                normalized_artifact = normalize_artifact("workspace_diff", diff_text)
+            if normalized_artifact is None:
+                raise RunnerError("case did not produce its declared artifact")
+            artifact_evidence = normalized_artifact.as_evidence()
+            hashes["artifact_sha256"] = normalized_artifact.sha256
+            _write_bytes(
+                artifact_root / normalized_artifact.filename,
+                normalized_artifact.content,
+            )
             stage = "verifier"
             self._assert_case_integrity(case)
             verifier_workspace = temp_root / "verifier-workspace"
-            _copy_tree(workspace, verifier_workspace, ignore_generated_caches=True)
+            final_output_artifact = case.artifact_contract.kind != "workspace_diff"
+            _copy_tree(
+                case.fixture_dir if final_output_artifact else workspace,
+                verifier_workspace,
+                ignore_generated_caches=True,
+            )
             verifier_before_hash = _tree_hash(verifier_workspace)
             verifier_json = self._run_verifier(
                 case,
                 verifier_workspace,
+                normalized_artifact,
                 result_root,
+                workspace_read_only=final_output_artifact,
             )
             verifier_after_hash = _tree_hash(verifier_workspace)
             verifier_json["workspace_before_sha256"] = verifier_before_hash
@@ -3766,6 +3798,7 @@ class EvalRunner:
                     "provider_entered": provider_entered,
                 },
                 "verifier": verifier_json,
+                "artifact": artifact_evidence,
                 "critical_results": critical,
                 "hashes": hashes,
                 "provider_window": provider_window,
@@ -3815,6 +3848,11 @@ class EvalRunner:
                     "provider_entered": provider_entered,
                 },
                 "verifier": verifier_json,
+                "artifact": (
+                    normalized_artifact.as_evidence()
+                    if normalized_artifact is not None
+                    else None
+                ),
                 "critical_results": {},
                 "hashes": hashes,
                 "provider_window": provider_window,
@@ -3933,7 +3971,10 @@ class EvalRunner:
         self,
         case: CaseSpec,
         workspace: Path,
+        artifact: NormalizedArtifact,
         result_root: Path,
+        *,
+        workspace_read_only: bool,
     ) -> dict[str, Any]:
         command = self._verifier_commands.get(case.id)
         if command is None:
@@ -3951,15 +3992,19 @@ class EvalRunner:
         runtime_case = runtime_root / "case"
         runtime_shared = runtime_root / "_shared"
         runtime_tool_bin = runtime_root / "tool-bin"
+        runtime_artifact = runtime_root / "artifact" / artifact.filename
         mounted_workspace = runtime_mount / "work"
         mounted_case = runtime_mount / "case"
         mounted_shared = runtime_mount / "_shared"
         mounted_tool_bin = runtime_mount / "tool-bin"
+        mounted_artifact = runtime_mount / "artifact" / artifact.filename
         shared_environment_enabled = (
             self._shared_snapshot is not None or self.suite.schema_version < 4
         )
         shared_mount_enabled = self._shared_snapshot is not None
         _copy_tree(workspace, runtime_workspace)
+        _write_bytes(runtime_artifact, artifact.content)
+        artifact.assert_content(_read_private_artifact(runtime_artifact))
         _materialize_snapshot(case_snapshot, runtime_case)
         if self._shared_snapshot is not None:
             _materialize_snapshot(self._shared_snapshot, runtime_shared)
@@ -4046,7 +4091,12 @@ class EvalRunner:
             f"BindPaths={runtime_root}:{runtime_mount}",
             f"BindReadOnlyPaths={runtime_case}:{mounted_case}",
             f"BindReadOnlyPaths={runtime_tool_bin}:{mounted_tool_bin}",
+            f"BindReadOnlyPaths={runtime_artifact}:{mounted_artifact}",
         ]
+        if workspace_read_only:
+            properties.append(
+                f"BindReadOnlyPaths={runtime_workspace}:{mounted_workspace}"
+            )
         properties.extend(f"InaccessiblePaths={root}" for root in sensitive_roots)
         if shared_mount_enabled:
             properties.append(f"BindReadOnlyPaths={runtime_shared}:{mounted_shared}")
@@ -4085,6 +4135,9 @@ class EvalRunner:
                 "PYTHONDONTWRITEBYTECODE=1",
                 "PYTHONPYCACHEPREFIX=/tmp/python-pycache",
                 f"EVAL_WORKSPACE={mounted_workspace}",
+                f"EVAL_ARTIFACT_PATH={mounted_artifact}",
+                f"EVAL_ARTIFACT_KIND={artifact.kind}",
+                f"EVAL_ARTIFACT_SHA256={artifact.sha256}",
                 f"EVAL_CASE_ROOT={mounted_case}",
                 *(
                     [f"EVAL_SHARED_ROOT={mounted_shared}"]
@@ -4135,6 +4188,12 @@ class EvalRunner:
             },
             "copied_executables": copied_executables,
             "executed_interpreter": str(mounted_tool_bin / interpreter.logical_name),
+            "artifact": {
+                **artifact.as_evidence(),
+                "mounted_path": str(mounted_artifact),
+                "read_only": True,
+            },
+            "workspace_read_only": workspace_read_only,
             "go_root": str(go_root) if go_root is not None else None,
             "gcc_exec_prefix": (
                 str(gcc_exec_prefix) if gcc_exec_prefix is not None else None
@@ -4166,6 +4225,7 @@ class EvalRunner:
                     "stdout": _timeout_text(exc.stdout),
                     "stderr": _timeout_text(exc.stderr),
                     "sandbox": sandbox_evidence,
+                    "artifact": sandbox_evidence["artifact"],
                 }
             except OSError as exc:
                 return {
@@ -4178,6 +4238,7 @@ class EvalRunner:
                     "stdout": "",
                     "stderr": "",
                     "sandbox": sandbox_evidence,
+                    "artifact": sandbox_evidence["artifact"],
                 }
             _verify_executable_bundle(runtime_tool_bin, copied_executables)
             duration = time.monotonic() - started
@@ -4192,6 +4253,7 @@ class EvalRunner:
                 "stderr": completed.stderr,
                 "stdout_sha256": _sha256(completed.stdout.encode("utf-8")),
                 "sandbox": sandbox_evidence,
+                "artifact": sandbox_evidence["artifact"],
             }
             if completed.returncode != 0:
                 runtime_limit_hit = duration >= case.verifier.timeout_seconds * 0.8
@@ -4219,6 +4281,13 @@ class EvalRunner:
             )
             return evidence
         finally:
+            artifact_drift_error: RunnerError | None = None
+            try:
+                artifact.assert_content(_read_private_artifact(runtime_artifact))
+            except (ArtifactError, OSError, RunnerError) as exc:
+                artifact_drift_error = RunnerError(
+                    f"normalized verifier artifact drifted: {exc}"
+                )
             for path in (
                 runtime_workspace,
                 runtime_case,
@@ -4230,6 +4299,8 @@ class EvalRunner:
                 shutil.rmtree(workspace)
             shutil.copytree(runtime_workspace, workspace, symlinks=True)
             shutil.rmtree(runtime_root, ignore_errors=True)
+            if artifact_drift_error is not None:
+                raise artifact_drift_error
 
     def _compare_blind(
         self,
@@ -6763,6 +6834,26 @@ def _write_bytes(path: Path, value: bytes) -> None:
         or stat.S_IMODE(metadata.st_mode) != PRIVATE_FILE_MODE
     ):
         raise RunnerError(f"result artifact is not an owner-only regular file: {path}")
+
+
+def _read_private_artifact(path: Path) -> bytes:
+    flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) != PRIVATE_FILE_MODE
+            or metadata.st_size > MAX_ARTIFACT_BYTES
+        ):
+            raise RunnerError("normalized artifact file metadata drifted")
+        content = os.read(descriptor, MAX_ARTIFACT_BYTES + 1)
+        if len(content) != metadata.st_size or os.read(descriptor, 1):
+            raise RunnerError("normalized artifact file size drifted")
+        return content
+    finally:
+        os.close(descriptor)
 
 
 def _write_json(path: Path, value: Any) -> None:

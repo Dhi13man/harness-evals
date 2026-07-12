@@ -178,7 +178,7 @@
   "runtime_adapter": {
     "id": "shared-harness-claude-cli-v1",
     "source_sha256": "48ccef7716021ccc4db55817976cb7481e1534d6655e5b548bfd3b048a4b4ff6",
-    "harness_runner_source_sha256": "d88d85d5d92128d603950c54311aecd405f79000b5514e171323f911861520f5",
+    "harness_runner_source_sha256": "5fb5948aa2169bee380e5d636688d2ad9035f6cf3e0d21956ad6ed5a3f76bcf0",
     "provider_source_sha256": "683ad36931344528f58d86497fdb44c70848af05de2b97a11a7195d74173306f",
     "profile_registry_source_sha256": "a1fb55b8ac27c8715feeeeac8f0df61f8d789514c4c12faf9508a25dfe466d26",
     "provider_capability_registry_source_sha256": "d0c09ed8df6b8ab2704045e71f7d7719c4d3639e028d156f7a6e58783661a3a5",

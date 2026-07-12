@@ -2839,6 +2839,86 @@ print(json.dumps({"passed": True, "assertions": [
             self.assertTrue(arm["verifier"]["workspace_mutated"])
             self.assertNotIn("verifier-created.txt", arm["diff"])
 
+    def test_final_text_artifact_and_pristine_workspace_are_read_only(self) -> None:
+        self.fixture.use_v6_objective()
+        self.fixture.manifest["schema_version"] = 7
+        self.fixture.manifest["cases"][0]["artifact_contract"] = {
+            "kind": "final_output_text"
+        }
+        self.fixture.set_verifier(
+            """import hashlib
+import json
+import os
+from pathlib import Path
+
+artifact = Path(os.environ["EVAL_ARTIFACT_PATH"])
+workspace = Path(os.environ["EVAL_WORKSPACE"])
+content = artifact.read_bytes()
+
+def rejects(action):
+    try:
+        action()
+    except OSError:
+        return True
+    return False
+
+artifact_read_only = rejects(lambda: artifact.write_text("mutated", encoding="utf-8"))
+artifact_unlink_rejected = rejects(artifact.unlink)
+workspace_read_only = rejects(
+    lambda: (workspace / "verifier-created.txt").write_text("mutated", encoding="utf-8")
+)
+passed = (
+    content == b"line 1\\nline 2\\n"
+    and os.environ["EVAL_ARTIFACT_KIND"] == "final_output_text"
+    and os.environ["EVAL_ARTIFACT_SHA256"] == hashlib.sha256(content).hexdigest()
+    and (workspace / "input.txt").read_text(encoding="utf-8") == "original\\n"
+    and not (workspace / "poison.txt").exists()
+    and not (workspace / "artifact.txt").exists()
+    and artifact_read_only
+    and artifact_unlink_rejected
+    and workspace_read_only
+)
+print(json.dumps({
+    "passed": passed,
+    "assertions": [{
+        "id": "answer-present",
+        "passed": passed,
+        "evidence": "canonical artifact and pristine fixture were mounted read-only",
+    }],
+    "metrics": {},
+}))
+"""
+        )
+        self.fixture.save_manifest()
+
+        def mutate_workspace(request):
+            (request.workspace / "input.txt").write_text("candidate mutation\n")
+            (request.workspace / "poison.txt").write_text("candidate-only\n")
+            (request.workspace / "artifact.txt").write_text("candidate fake\n")
+            return "line 1\r\nline 2\r"
+
+        provider = FakeProvider(agent_handler=mutate_workspace)
+        result = EvalRunner(self.load(), provider).run(
+            RunSelection(comparison_ids=("without-current",)),
+            output_dir=self.output("final-text-artifact"),
+        )
+
+        self.assertTrue(result["passed"], result)
+        for arm in result["pairs"][0]["arms"].values():
+            self.assertEqual(arm["status"], "completed")
+            self.assertEqual(arm["artifact"]["kind"], "final_output_text")
+            self.assertEqual(arm["artifact"]["byte_count"], 14)
+            self.assertTrue(arm["verifier"]["artifact"]["read_only"])
+            self.assertTrue(arm["verifier"]["sandbox"]["workspace_read_only"])
+            self.assertFalse(arm["verifier"]["workspace_mutated"])
+            self.assertTrue(
+                any(
+                    item.startswith("BindReadOnlyPaths=")
+                    and item.endswith("/artifact/artifact.txt")
+                    for item in arm["verifier"]["sandbox"]["properties"]
+                )
+            )
+
     def test_configured_shared_verifier_is_snapshotted_and_mounted_read_only(
         self,
     ) -> None:
