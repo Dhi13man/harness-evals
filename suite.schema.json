@@ -43,6 +43,11 @@
             "required": [
               "comparator_profile"
             ]
+          },
+          {
+            "required": [
+              "shared_verifier_dir"
+            ]
           }
         ]
       }
@@ -67,6 +72,13 @@
         }
       },
       "allOf": [
+        {
+          "not": {
+            "required": [
+              "shared_verifier_dir"
+            ]
+          }
+        },
         {
           "if": {
             "properties": {
@@ -124,7 +136,8 @@
     "suiteV4": {
       "$ref": "#/$defs/suiteBase",
       "required": [
-        "evaluation_mode"
+        "evaluation_mode",
+        "shared_verifier_dir"
       ],
       "properties": {
         "schema_version": {
@@ -232,6 +245,16 @@
           "$ref": "#/$defs/comparatorProvider"
         },
         "comparator_profile": {},
+        "shared_verifier_dir": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/sharedVerifierPath"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "variants": {
           "type": "array",
           "minItems": 2,
@@ -325,6 +348,11 @@
       "pattern": "^(?!/)(?!\\./)(?!.*//)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*\\/$).+$"
     },
     "bundleSourcePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!.*[\\u0000-\\u001f\\ud800-\\udfff])(?!/)(?!\\./)(?!.*//)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*\\/$)(?!.*\\\\)[^\\u0000-\\u001f\\ud800-\\udfff]+$"
+    },
+    "sharedVerifierPath": {
       "type": "string",
       "minLength": 1,
       "pattern": "^(?!.*[\\u0000-\\u001f\\ud800-\\udfff])(?!/)(?!\\./)(?!.*//)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*\\/$)(?!.*\\\\)[^\\u0000-\\u001f\\ud800-\\udfff]+$"

@@ -539,6 +539,7 @@ class SuiteFixture:
     def use_v4_judged(self, bundle_source: str = "skills/demo") -> None:
         self.use_v3_judged()
         self.manifest["schema_version"] = 4
+        self.manifest["shared_verifier_dir"] = None
         for case in self.manifest["cases"]:
             case["bundle_source"] = bundle_source
         self.save_manifest()
@@ -546,8 +547,26 @@ class SuiteFixture:
     def use_v4_objective(self, bundle_source: str = "skills/demo") -> None:
         self.use_v3_objective()
         self.manifest["schema_version"] = 4
+        self.manifest["shared_verifier_dir"] = None
         for case in self.manifest["cases"]:
             case["bundle_source"] = bundle_source
+        self.save_manifest()
+
+    def isolate_basic_case(self) -> None:
+        case_root = "cases/basic"
+        self._write_suite(f"{case_root}/prompt.md", "Fix and verify the result.\n")
+        self._write_suite(f"{case_root}/fixture/input.txt", "original\n")
+        self._write_suite(
+            f"{case_root}/oracle/verifier.py",
+            (self.suite_root / "verifier.py").read_text(encoding="utf-8"),
+        )
+        case = self.manifest["cases"][0]
+        case["prompt_file"] = f"{case_root}/prompt.md"
+        case["fixture_dir"] = f"{case_root}/fixture"
+        case["verifier"]["argv"] = [
+            "python3",
+            f"{case_root}/oracle/verifier.py",
+        ]
         self.save_manifest()
 
     def create_data_profile(
@@ -685,10 +704,10 @@ class SuiteFixture:
             ).read_text(encoding="utf-8")
         )
         case_bindings = []
-        shared_root = self.suite_root / "cases" / "testing" / "_shared"
+        shared_root = suite.shared_verifier_dir
         shared_snapshot = (
             _snapshot_tree(shared_root, ignore_generated_caches=True)
-            if shared_root.is_dir()
+            if shared_root is not None
             else None
         )
         for case in suite.cases:
@@ -2701,6 +2720,328 @@ print(json.dumps({"passed": True, "assertions": [
         for arm in result["pairs"][0]["arms"].values():
             self.assertTrue(arm["verifier"]["workspace_mutated"])
             self.assertNotIn("verifier-created.txt", arm["diff"])
+
+    def test_configured_shared_verifier_is_snapshotted_and_mounted_read_only(
+        self,
+    ) -> None:
+        self.fixture.isolate_basic_case()
+        self.fixture._write_suite(
+            "verifier-resources/shared/helper.txt", "configured shared value\n"
+        )
+        self.fixture._write_suite(
+            "verifier-resources/shared/verifier.py",
+            """import json
+import os
+from pathlib import Path
+
+workspace = Path(os.environ["EVAL_WORKSPACE"])
+shared = Path(os.environ["EVAL_SHARED_ROOT"])
+helper = shared / "helper.txt"
+answer = workspace / "answer.txt"
+try:
+    helper.write_text("mutated", encoding="utf-8")
+    read_only = False
+except OSError:
+    read_only = True
+passed = (
+    helper.read_text(encoding="utf-8") == "configured shared value\\n"
+    and answer.is_file()
+    and read_only
+)
+print(json.dumps({
+    "passed": passed,
+    "assertions": [{
+        "id": "answer-present",
+        "passed": passed,
+        "evidence": "configured shared helper was readable and immutable",
+    }],
+    "metrics": {},
+}))
+""",
+        )
+        self.fixture.use_v4_objective()
+        self.fixture.manifest["shared_verifier_dir"] = "verifier-resources/shared"
+        self.fixture.manifest["cases"][0]["verifier"]["argv"] = [
+            "python3",
+            "verifier-resources/shared/verifier.py",
+        ]
+        self.fixture.save_manifest()
+        provider = self.fixture.provider()
+
+        result = EvalRunner(self.load(), provider).run(
+            RunSelection(comparison_ids=("without-current",)),
+            output_dir=self.output("configured-shared-verifier"),
+        )
+
+        self.assertTrue(
+            all(
+                arm["verifier"]["passed"]
+                for pair in result["pairs"]
+                for arm in pair["arms"].values()
+            ),
+            result,
+        )
+        for pair in result["pairs"]:
+            for arm in pair["arms"].values():
+                self.assertTrue(
+                    arm["verifier"]["executed_argv"][1].endswith("/_shared/verifier.py")
+                )
+                self.assertTrue(
+                    any(
+                        value.startswith("BindReadOnlyPaths=")
+                        and value.endswith("/_shared")
+                        for value in arm["verifier"]["sandbox"]["properties"]
+                    )
+                )
+
+    def test_null_shared_verifier_omits_environment_and_mount(self) -> None:
+        self.fixture.isolate_basic_case()
+        self.fixture._write_suite(
+            "cases/testing/_shared/must-not-mount.txt", "legacy fallback\n"
+        )
+        self.fixture._write_suite(
+            "cases/basic/oracle/verifier.py",
+            """import json
+import os
+from pathlib import Path
+
+answer = Path(os.environ["EVAL_WORKSPACE"]) / "answer.txt"
+passed = answer.is_file() and "EVAL_SHARED_ROOT" not in os.environ
+print(json.dumps({
+    "passed": passed,
+    "assertions": [{
+        "id": "answer-present",
+        "passed": passed,
+        "evidence": "null shared verifier root was omitted",
+    }],
+    "metrics": {},
+}))
+""",
+        )
+        self.fixture.use_v4_objective()
+        provider = self.fixture.provider()
+
+        result = EvalRunner(self.load(), provider).run(
+            RunSelection(comparison_ids=("without-current",)),
+            output_dir=self.output("null-shared-verifier"),
+        )
+
+        self.assertTrue(
+            all(
+                arm["verifier"]["passed"]
+                and all(
+                    not (
+                        value.startswith("BindReadOnlyPaths=")
+                        and value.endswith("/_shared")
+                    )
+                    for value in arm["verifier"]["sandbox"]["properties"]
+                )
+                for pair in result["pairs"]
+                for arm in pair["arms"].values()
+            ),
+            result,
+        )
+
+    def test_legacy_shared_verifier_environment_is_preserved(self) -> None:
+        self.fixture._write_suite(
+            "cases/testing/_shared/helper.txt", "legacy shared value\n"
+        )
+        self.fixture._write_suite(
+            "cases/testing/_shared/verifier.py",
+            """import json
+import os
+from pathlib import Path
+
+shared = Path(os.environ["EVAL_SHARED_ROOT"])
+answer = Path(os.environ["EVAL_WORKSPACE"]) / "answer.txt"
+passed = (
+    answer.is_file()
+    and (shared / "helper.txt").read_text(encoding="utf-8") == "legacy shared value\\n"
+)
+print(json.dumps({
+    "passed": passed,
+    "assertions": [{
+        "id": "answer-present",
+        "passed": passed,
+        "evidence": "legacy shared verifier environment remains available",
+    }],
+    "metrics": {},
+}))
+""",
+        )
+        for version in (2, 3):
+            self.fixture.manifest = self.fixture._manifest()
+            self.fixture.isolate_basic_case()
+            if version == 3:
+                self.fixture.use_v3_objective()
+            self.fixture.manifest["cases"][0]["verifier"]["argv"] = [
+                "python3",
+                "cases/testing/_shared/verifier.py",
+            ]
+            self.fixture.save_manifest()
+            provider = self.fixture.provider()
+            suite = self.load()
+            runner = (
+                EvalRunner(suite, provider, provider)
+                if version == 2
+                else EvalRunner(suite, provider)
+            )
+
+            with runner:
+                result = runner.run(
+                    RunSelection(comparison_ids=("without-current",)),
+                    output_dir=self.output(f"legacy-shared-v{version}"),
+                )
+
+            with self.subTest(version=version):
+                self.assertTrue(
+                    all(
+                        arm["verifier"]["passed"]
+                        and any(
+                            value.startswith("BindReadOnlyPaths=")
+                            and value.endswith("/_shared")
+                            for value in arm["verifier"]["sandbox"]["properties"]
+                        )
+                        for pair in result["pairs"]
+                        for arm in pair["arms"].values()
+                    ),
+                    result,
+                )
+
+    def test_absent_legacy_shared_verifier_path_remains_unmounted(self) -> None:
+        verifier = """import json
+import os
+from pathlib import Path
+
+shared_value = os.environ.get("EVAL_SHARED_ROOT")
+answer = Path(os.environ["EVAL_WORKSPACE"]) / "answer.txt"
+passed = (
+    answer.is_file()
+    and shared_value is not None
+    and not Path(shared_value).exists()
+)
+print(json.dumps({
+    "passed": passed,
+    "assertions": [{
+        "id": "answer-present",
+        "passed": passed,
+        "evidence": "absent legacy shared path remains exported but unmounted",
+    }],
+    "metrics": {},
+}))
+"""
+        for version in (2, 3):
+            self.fixture.manifest = self.fixture._manifest()
+            self.fixture.isolate_basic_case()
+            self.fixture._write_suite("cases/basic/oracle/verifier.py", verifier)
+            if version == 3:
+                self.fixture.use_v3_objective()
+            provider = self.fixture.provider()
+            suite = self.load()
+            runner = (
+                EvalRunner(suite, provider, provider)
+                if version == 2
+                else EvalRunner(suite, provider)
+            )
+
+            with runner:
+                result = runner.run(
+                    RunSelection(comparison_ids=("without-current",)),
+                    output_dir=self.output(f"absent-legacy-shared-v{version}"),
+                )
+
+            with self.subTest(version=version):
+                self.assertTrue(
+                    all(
+                        arm["verifier"]["passed"]
+                        and all(
+                            not (
+                                value.startswith("BindReadOnlyPaths=")
+                                and value.endswith("/_shared")
+                            )
+                            for value in arm["verifier"]["sandbox"]["properties"]
+                        )
+                        for pair in result["pairs"]
+                        for arm in pair["arms"].values()
+                    ),
+                    result,
+                )
+
+    def test_configured_shared_verifier_drift_fails_before_provider_dispatch(
+        self,
+    ) -> None:
+        self.fixture.isolate_basic_case()
+        shared_path = "verifier-resources/shared/helper.py"
+        self.fixture._write_suite(shared_path, "VALUE = 1\n")
+        self.fixture.use_v4_objective()
+        self.fixture.manifest["shared_verifier_dir"] = "verifier-resources/shared"
+        self.fixture.save_manifest()
+        provider = self.fixture.provider()
+        runner = EvalRunner(self.load(), provider)
+        original_preflight = runner.preflight
+
+        def preflight_then_mutate(selection):
+            evidence = original_preflight(selection)
+            self.fixture._write_suite(shared_path, "VALUE = 2\n")
+            return evidence
+
+        with (
+            patch.object(runner, "preflight", side_effect=preflight_then_mutate),
+            self.assertRaisesRegex(RunnerError, "source drifted after preflight"),
+        ):
+            runner.run(
+                RunSelection(comparison_ids=("without-current",)),
+                output_dir=self.output("shared-verifier-drift"),
+            )
+        self.assertEqual(provider.agent_requests, [])
+
+    def test_configured_shared_verifier_revalidates_ancestors_after_load(self) -> None:
+        self.fixture.isolate_basic_case()
+        self.fixture._write_suite("verifier-resources/shared/helper.py", "VALUE = 1\n")
+        self.fixture.use_v4_objective()
+        self.fixture.manifest["shared_verifier_dir"] = "verifier-resources/shared"
+        self.fixture.save_manifest()
+        suite = self.load()
+        original = self.fixture.suite_root / "verifier-resources"
+        original.rename(self.fixture.suite_root / "original-verifier-resources")
+        external = self.fixture.root / "external-verifier-resources"
+        external.joinpath("shared").mkdir(parents=True)
+        external.joinpath("shared/helper.py").write_text(
+            "EXTERNAL = True\n", encoding="utf-8"
+        )
+        original.symlink_to(external, target_is_directory=True)
+        provider = self.fixture.provider()
+
+        with self.assertRaisesRegex(RunnerError, "traverses a symlink"):
+            EvalRunner(suite, provider).preflight(
+                RunSelection(comparison_ids=("without-current",))
+            )
+        self.assertEqual(provider.agent_requests, [])
+
+    def test_preflight_rejects_unmounted_suite_verifier_scripts(self) -> None:
+        self.fixture.isolate_basic_case()
+        self.fixture._write_suite("tools/verifier.py", _PASSING_VERIFIER)
+        self.fixture._write_suite("verifier-resources/shared/helper.py", "VALUE = 1\n")
+        for shared_verifier_dir in (None, "verifier-resources/shared"):
+            self.fixture.manifest = self.fixture._manifest()
+            self.fixture.isolate_basic_case()
+            self.fixture.use_v4_objective()
+            self.fixture.manifest["shared_verifier_dir"] = shared_verifier_dir
+            self.fixture.manifest["cases"][0]["verifier"]["argv"] = [
+                "python3",
+                "tools/verifier.py",
+            ]
+            self.fixture.save_manifest()
+            provider = self.fixture.provider()
+
+            with self.subTest(shared_verifier_dir=shared_verifier_dir):
+                with self.assertRaisesRegex(
+                    RunnerError, "outside case and shared verifier roots"
+                ):
+                    EvalRunner(self.load(), provider).preflight(
+                        RunSelection(comparison_ids=("without-current",))
+                    )
+                self.assertEqual(provider.agent_requests, [])
 
     def test_verifier_sandbox_hides_host_secrets_processes_and_network(self) -> None:
         secret = self.fixture.repository / "verifier-secret.txt"
@@ -5694,6 +6035,188 @@ class ManifestValidationTests(unittest.TestCase):
                 with self.assertRaises(ManifestError):
                     load_suite(self.fixture.manifest_path)
 
+    def test_shared_verifier_dir_versions_null_and_configured(self) -> None:
+        schema = json.loads((HARNESS_ROOT / "suite.schema.json").read_text())
+        self.assertIsNone(load_suite(self.fixture.manifest_path).shared_verifier_dir)
+
+        self.fixture.use_v3_judged()
+        version_three_bytes = self.fixture.manifest_path.read_bytes()
+        version_three = load_suite(self.fixture.manifest_path)
+        self.assertIsNone(version_three.shared_verifier_dir)
+        self.assertEqual(version_three.raw_bytes, version_three_bytes)
+
+        self.fixture.manifest = self.fixture._manifest()
+        self.fixture.isolate_basic_case()
+        self.fixture._write_suite(
+            "cases/testing/_shared/helper.py", "LEGACY_SHARED = 1\n"
+        )
+        legacy_bytes = self.fixture.manifest_path.read_bytes()
+        legacy_shared = load_suite(self.fixture.manifest_path)
+        self.assertEqual(legacy_shared.raw_bytes, legacy_bytes)
+        self.assertEqual(
+            legacy_shared.shared_verifier_dir,
+            self.fixture.suite_root / "cases/testing/_shared",
+        )
+
+        self.fixture.use_v4_objective()
+        null_payload = copy.deepcopy(self.fixture.manifest)
+        self.assertEqual(
+            list(Draft202012Validator(schema).iter_errors(null_payload)), []
+        )
+        self.assertIsNone(load_suite(self.fixture.manifest_path).shared_verifier_dir)
+
+        missing = copy.deepcopy(null_payload)
+        del missing["shared_verifier_dir"]
+        self.assertTrue(list(Draft202012Validator(schema).iter_errors(missing)))
+        self.fixture.manifest = missing
+        self.fixture.save_manifest()
+        with self.assertRaises(ManifestError):
+            load_suite(self.fixture.manifest_path)
+
+        for version in (2, 3):
+            legacy = self.fixture._manifest()
+            if version == 3:
+                self.fixture.manifest = legacy
+                self.fixture.use_v3_judged()
+                legacy = copy.deepcopy(self.fixture.manifest)
+            legacy["shared_verifier_dir"] = None
+            self.assertTrue(list(Draft202012Validator(schema).iter_errors(legacy)))
+            self.fixture.manifest = legacy
+            self.fixture.save_manifest()
+            with self.assertRaises(ManifestError):
+                load_suite(self.fixture.manifest_path)
+
+        self.fixture.manifest = self.fixture._manifest()
+        self.fixture.isolate_basic_case()
+        self.fixture._write_suite(
+            "verifier-resources/shared/helper.py", "SHARED_VALUE = 1\n"
+        )
+        self.fixture.use_v4_objective()
+        self.fixture.manifest["shared_verifier_dir"] = "verifier-resources/shared"
+        self.fixture.save_manifest()
+        configured_payload = copy.deepcopy(self.fixture.manifest)
+        self.assertEqual(
+            list(Draft202012Validator(schema).iter_errors(configured_payload)), []
+        )
+        self.assertEqual(
+            load_suite(self.fixture.manifest_path).shared_verifier_dir,
+            self.fixture.suite_root / "verifier-resources/shared",
+        )
+
+    def test_shared_verifier_dir_rejects_invalid_symlink_and_overlap(self) -> None:
+        schema = json.loads((HARNESS_ROOT / "suite.schema.json").read_text())
+        self.fixture.isolate_basic_case()
+        self.fixture._write_suite("verifier-resources/shared/helper.py", "value = 1\n")
+        self.fixture.use_v4_objective()
+        valid = copy.deepcopy(self.fixture.manifest)
+        invalid_values = (
+            "",
+            ".",
+            "/absolute",
+            "../escape",
+            "./prefixed",
+            "double//separator",
+            "trailing/",
+            "windows\\separator",
+            "control\n",
+            "surrogate\ud800",
+        )
+        for value in invalid_values:
+            mutation = copy.deepcopy(valid)
+            mutation["shared_verifier_dir"] = value
+            with self.subTest(value=value):
+                self.assertTrue(
+                    list(Draft202012Validator(schema).iter_errors(mutation))
+                )
+                self.fixture.manifest = mutation
+                self.fixture.save_manifest()
+                with self.assertRaises(ManifestError):
+                    load_suite(self.fixture.manifest_path)
+
+        missing = copy.deepcopy(valid)
+        missing["shared_verifier_dir"] = "verifier-resources/missing"
+        self.fixture.manifest = missing
+        self.fixture.save_manifest()
+        with self.assertRaisesRegex(ManifestError, "cannot resolve"):
+            load_suite(self.fixture.manifest_path)
+
+        linked = self.fixture.suite_root / "verifier-resources/linked"
+        linked.symlink_to(
+            self.fixture.suite_root / "verifier-resources/shared",
+            target_is_directory=True,
+        )
+        symlinked = copy.deepcopy(valid)
+        symlinked["shared_verifier_dir"] = "verifier-resources/linked"
+        self.fixture.manifest = symlinked
+        self.fixture.save_manifest()
+        with self.assertRaisesRegex(ManifestError, "must not traverse a symlink"):
+            load_suite(self.fixture.manifest_path)
+
+        overlap = copy.deepcopy(valid)
+        overlap["shared_verifier_dir"] = "cases/basic/fixture"
+        self.fixture.manifest = overlap
+        self.fixture.save_manifest()
+        with self.assertRaisesRegex(ManifestError, "overlaps case basic"):
+            load_suite(self.fixture.manifest_path)
+
+    def test_legacy_shared_verifier_dir_fails_closed_on_symlinks(self) -> None:
+        external = self.fixture.root / "external-legacy-shared"
+        external.mkdir()
+        shared = self.fixture.suite_root / "cases/testing/_shared"
+        shared.parent.mkdir(parents=True)
+        shared.symlink_to(external, target_is_directory=True)
+
+        for version in (2, 3):
+            self.fixture.manifest = self.fixture._manifest()
+            if version == 3:
+                self.fixture.use_v3_judged()
+            else:
+                self.fixture.save_manifest()
+            with self.subTest(version=version, link="leaf"):
+                with self.assertRaisesRegex(
+                    ManifestError, "must not traverse a symlink"
+                ):
+                    load_suite(self.fixture.manifest_path)
+
+        shared.unlink()
+        shutil.rmtree(self.fixture.suite_root / "cases")
+        external_cases = self.fixture.root / "external-cases"
+        external_cases.joinpath("testing/_shared").mkdir(parents=True)
+        (self.fixture.suite_root / "cases").symlink_to(
+            external_cases, target_is_directory=True
+        )
+        for version in (2, 3):
+            self.fixture.manifest = self.fixture._manifest()
+            if version == 3:
+                self.fixture.use_v3_judged()
+            else:
+                self.fixture.save_manifest()
+            with self.subTest(version=version, link="ancestor"):
+                with self.assertRaisesRegex(
+                    ManifestError, "must not traverse a symlink"
+                ):
+                    load_suite(self.fixture.manifest_path)
+
+    def test_shared_verifier_dir_rejects_bundle_and_context_overlap(self) -> None:
+        self.fixture.isolate_basic_case()
+        self.fixture._write_suite("verifier-resources/shared/helper.py", "VALUE = 1\n")
+        self.fixture._write_suite(
+            "verifier-resources/SKILL.md", "# Verifier resources must stay private\n"
+        )
+        self.fixture.use_v4_objective("eval-suite/verifier-resources")
+        self.fixture.manifest["shared_verifier_dir"] = "verifier-resources/shared"
+        self.fixture.save_manifest()
+        with self.assertRaisesRegex(ManifestError, "overlaps case basic"):
+            load_suite(self.fixture.manifest_path)
+
+        self.fixture.manifest["cases"][0]["bundle_source"] = "skills/demo"
+        self.fixture.manifest["cases"][0]["context_files"] = [
+            "eval-suite/verifier-resources/shared/helper.py"
+        ]
+        self.fixture.save_manifest()
+        with self.assertRaisesRegex(ManifestError, "overlaps case basic"):
+            load_suite(self.fixture.manifest_path)
+
     def test_suite_local_profile_is_contained_and_never_authoritative(self) -> None:
         self.fixture.create_data_profile("profiles/local")
         self.fixture.use_v3_judged({"kind": "suite_local", "path": "profiles/local"})
@@ -6310,6 +6833,7 @@ class CheckedInSuiteTests(unittest.TestCase):
         self.assertEqual(
             schema["$defs"]["suiteV4"]["properties"]["schema_version"]["const"], 4
         )
+        self.assertIn("shared_verifier_dir", schema["$defs"]["suiteV4"]["required"])
 
     def test_gcc_attestation_includes_derived_driver_closure(self) -> None:
         gcc = shutil.which("gcc")

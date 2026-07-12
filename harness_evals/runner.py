@@ -1735,10 +1735,10 @@ class EvalRunner:
             for role in ("candidate", "original")
             if role in source_records
         }
-        shared_root = self.suite.root / "cases" / "testing" / "_shared"
+        shared_root = _effective_shared_verifier_dir(self.suite)
         self._shared_snapshot = (
             _snapshot_tree(shared_root, ignore_generated_caches=True)
-            if shared_root.is_dir()
+            if shared_root is not None
             else None
         )
         case_records: list[dict[str, Any]] = []
@@ -1752,7 +1752,7 @@ class EvalRunner:
                 ) from exc
             if not prompt.strip():
                 raise RunnerError(f"case {case.id} prompt is empty")
-            command = _resolve_verifier_command(self.suite.root, case)
+            command = _resolve_verifier_command(self.suite.root, case, shared_root)
             self._verifier_commands[case.id] = command
             interpreter = _attest_executable(Path(command[0]), Path(command[0]).name)
             tool_attestations = tuple(
@@ -3454,11 +3454,11 @@ class EvalRunner:
         stored = self._case_snapshots.get(case.id)
         if stored is None:
             raise RunnerError(f"case {case.id} has no preflight source snapshot")
-        shared_root = self.suite.root / "cases" / "testing" / "_shared"
+        shared_root = _effective_shared_verifier_dir(self.suite)
         observed = _combined_case_hash(
             _snapshot_tree(case.prompt_file.parent, ignore_generated_caches=True),
             _snapshot_tree(shared_root, ignore_generated_caches=True)
-            if shared_root.is_dir()
+            if shared_root is not None
             else None,
         )
         if (
@@ -3495,6 +3495,10 @@ class EvalRunner:
         mounted_case = runtime_mount / "case"
         mounted_shared = runtime_mount / "_shared"
         mounted_tool_bin = runtime_mount / "tool-bin"
+        shared_environment_enabled = (
+            self._shared_snapshot is not None or self.suite.schema_version < 4
+        )
+        shared_mount_enabled = self._shared_snapshot is not None
         _copy_tree(workspace, runtime_workspace)
         _materialize_snapshot(case_snapshot, runtime_case)
         if self._shared_snapshot is not None:
@@ -3508,7 +3512,7 @@ class EvalRunner:
         for name, evidence in copied_executables.items():
             evidence["executed_path"] = str(mounted_tool_bin / name)
         case_root = case.prompt_file.parent
-        shared_root = self.suite.root / "cases" / "testing" / "_shared"
+        shared_root = _effective_shared_verifier_dir(self.suite)
         translated: list[str] = []
         for index, argument in enumerate(command):
             if index == 0:
@@ -3521,7 +3525,7 @@ class EvalRunner:
                 )
             elif (
                 argument_path.is_absolute()
-                and shared_root.is_dir()
+                and shared_root is not None
                 and argument_path.is_relative_to(shared_root)
             ):
                 translated.append(
@@ -3584,7 +3588,7 @@ class EvalRunner:
             f"BindReadOnlyPaths={runtime_tool_bin}:{mounted_tool_bin}",
         ]
         properties.extend(f"InaccessiblePaths={root}" for root in sensitive_roots)
-        if self._shared_snapshot is not None:
+        if shared_mount_enabled:
             properties.append(f"BindReadOnlyPaths={runtime_shared}:{mounted_shared}")
         sandbox_command = [
             self._systemd_run,
@@ -3622,7 +3626,11 @@ class EvalRunner:
                 "PYTHONPYCACHEPREFIX=/tmp/python-pycache",
                 f"EVAL_WORKSPACE={mounted_workspace}",
                 f"EVAL_CASE_ROOT={mounted_case}",
-                f"EVAL_SHARED_ROOT={mounted_shared}",
+                *(
+                    [f"EVAL_SHARED_ROOT={mounted_shared}"]
+                    if shared_environment_enabled
+                    else []
+                ),
                 f"EVAL_TOOL_BIN={mounted_tool_bin}",
                 f"EVAL_RESULT_ROOT={result_root}",
                 f"EVAL_HOST_UID={os.getuid()}",
@@ -4687,7 +4695,18 @@ def _one_sided_sign_test(wins: int, losses: int) -> float | None:
     return sum(math.comb(n, value) for value in range(wins, n + 1)) / (2**n)
 
 
-def _resolve_verifier_command(suite_root: Path, case: CaseSpec) -> tuple[str, ...]:
+def _resolve_verifier_command(
+    suite_root: Path, case: CaseSpec, shared_root: Path | None
+) -> tuple[str, ...]:
+    def assert_mounted(path: Path, kind: str) -> None:
+        if path.is_relative_to(case.prompt_file.parent) or (
+            shared_root is not None and path.is_relative_to(shared_root)
+        ):
+            return
+        raise RunnerError(
+            f"case {case.id} verifier {kind} is outside case and shared verifier roots"
+        )
+
     argv = list(case.verifier.argv)
     executable = Path(argv[0])
     if executable.parent != Path("."):
@@ -4702,6 +4721,7 @@ def _resolve_verifier_command(suite_root: Path, case: CaseSpec) -> tuple[str, ..
             raise RunnerError(
                 f"case {case.id} verifier executable is missing or not executable"
             )
+        assert_mounted(resolved, "executable")
         argv[0] = str(resolved)
     else:
         resolved_executable = shutil.which(argv[0])
@@ -4727,6 +4747,7 @@ def _resolve_verifier_command(suite_root: Path, case: CaseSpec) -> tuple[str, ..
                 raise RunnerError(
                     f"case {case.id} verifier script is missing: {script}"
                 )
+            assert_mounted(resolved_script, "script")
             argv[1] = str(resolved_script)
     return tuple(argv)
 
@@ -5302,6 +5323,37 @@ def _git_source_fingerprint(
         digest.update(_git_blob(root, commit, context_file))
         digest.update(b"\0")
     return digest.hexdigest()
+
+
+def _effective_shared_verifier_dir(suite: SuiteSpec) -> Path | None:
+    configured = suite.shared_verifier_dir
+    if configured is None and suite.schema_version >= 4:
+        return None
+    logical = configured or (suite.root / "cases" / "testing" / "_shared")
+    if configured is None and not logical.exists() and not logical.is_symlink():
+        return None
+    try:
+        relative = logical.relative_to(suite.root)
+    except ValueError as exc:
+        raise RunnerError("shared verifier directory escapes suite root") from exc
+    current = suite.root
+    for part in relative.parts:
+        current /= part
+        if current.is_symlink():
+            raise RunnerError("shared verifier directory traverses a symlink")
+    try:
+        resolved = logical.resolve(strict=True)
+    except OSError as exc:
+        raise RunnerError(f"cannot resolve shared verifier directory: {exc}") from exc
+    if (
+        not resolved.is_relative_to(suite.root)
+        or not resolved.is_dir()
+        or resolved != logical
+    ):
+        raise RunnerError(
+            "shared verifier directory must remain contained and unchanged"
+        )
+    return resolved
 
 
 def _combined_case_hash(
