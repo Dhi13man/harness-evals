@@ -413,7 +413,16 @@ class SuiteFixture:
 
     def _git(self, *arguments: str) -> str:
         completed = subprocess.run(
-            ["git", "-C", str(self.repository), *arguments],
+            [
+                "git",
+                "-c",
+                "maintenance.auto=false",
+                "-c",
+                "gc.auto=0",
+                "-C",
+                str(self.repository),
+                *arguments,
+            ],
             capture_output=True,
             text=True,
             check=False,
