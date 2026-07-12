@@ -80,6 +80,7 @@ class VerifierSpec:
 class CaseSpec:
     id: str
     skill: str
+    bundle_source: PurePosixPath
     split: str
     prompt_file: Path
     fixture_dir: Path
@@ -396,6 +397,25 @@ def _repository_path(value: Any, location: str) -> PurePosixPath:
     return path
 
 
+def _bundle_source_path(value: Any, location: str) -> PurePosixPath:
+    raw = _string(value, location)
+    try:
+        raw.encode("utf-8", errors="strict")
+    except UnicodeEncodeError as exc:
+        raise ManifestError(f"{location} must be valid UTF-8 text") from exc
+    path = _repository_path(raw, location)
+    if (
+        path.as_posix() != raw
+        or raw.startswith("./")
+        or "//" in raw
+        or raw.endswith("/")
+        or "\\" in raw
+        or any(ord(character) < 32 for character in raw)
+    ):
+        raise ManifestError(f"{location} must be a canonical repository-relative path")
+    return path
+
+
 def _unique_ids(values: list[str], location: str) -> None:
     seen: set[str] = set()
     duplicates: set[str] = set()
@@ -608,6 +628,7 @@ def _parse_cases(
     suite_root: Path,
     *,
     require_comparator_contract: bool,
+    require_bundle_source: bool,
     comparator_contract_vocabulary: dict[str, frozenset[str]] | None,
 ) -> tuple[CaseSpec, ...]:
     items = _list(raw, "cases", minimum=1)
@@ -615,6 +636,7 @@ def _parse_cases(
     case_fields = {
         "id",
         "skill",
+        "bundle_source",
         "split",
         "prompt_file",
         "fixture_dir",
@@ -624,11 +646,11 @@ def _parse_cases(
         "critical_expectations",
         "comparator_contract",
     }
-    required_case_fields = (
-        case_fields
-        if require_comparator_contract
-        else case_fields - {"comparator_contract"}
-    )
+    required_case_fields = case_fields - {"comparator_contract", "bundle_source"}
+    if require_comparator_contract:
+        required_case_fields.add("comparator_contract")
+    if require_bundle_source:
+        required_case_fields.add("bundle_source")
     allowed_case_fields = required_case_fields
     verifier_fields = {"argv", "timeout_seconds", "required_tools"}
     for index, item in enumerate(items):
@@ -695,10 +717,18 @@ def _parse_cases(
         )
         if len(set(critical)) != len(critical):
             raise ManifestError(f"{location}.critical_expectations contains duplicates")
+        skill = _string(data["skill"], f"{location}.skill", pattern=SKILL_RE)
         cases.append(
             CaseSpec(
                 id=_string(data["id"], f"{location}.id", pattern=IDENTIFIER_RE),
-                skill=_string(data["skill"], f"{location}.skill", pattern=SKILL_RE),
+                skill=skill,
+                bundle_source=(
+                    _bundle_source_path(
+                        data["bundle_source"], f"{location}.bundle_source"
+                    )
+                    if require_bundle_source
+                    else PurePosixPath("skills") / skill
+                ),
                 split=split,
                 prompt_file=_suite_path(
                     suite_root,
@@ -910,7 +940,7 @@ def load_suite(path: str | Path) -> SuiteSpec:
     if not isinstance(data, dict):
         raise ManifestError("suite must be an object")
     schema_version = _integer(
-        data.get("schema_version"), "schema_version", minimum=2, maximum=3
+        data.get("schema_version"), "schema_version", minimum=2, maximum=4
     )
     common_fields = {
         "$schema",
@@ -987,6 +1017,7 @@ def load_suite(path: str | Path) -> SuiteSpec:
         root["cases"],
         suite_root,
         require_comparator_contract=evaluation_mode == "judged",
+        require_bundle_source=schema_version >= 4,
         comparator_contract_vocabulary=_comparator_contract_vocabulary(
             comparator_profile
         ),
