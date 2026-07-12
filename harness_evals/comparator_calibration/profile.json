@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "id": "software-engineering-v2.3",
   "version": "2.3.0",
   "engine_contract": "software-change-comparator-v2.3",
@@ -13,6 +13,7 @@
     "request_template": "request-template.json",
     "response_schema": "response.schema.json",
     "evidence_schema": "evidence.schema.json",
+    "semantic_contract": "semantic-contract.json",
     "production_release": "release.json",
     "test_release": "tests/test-release.json"
   },

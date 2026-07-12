@@ -37,6 +37,7 @@
     "pairs": {
       "type": "array",
       "minItems": 30,
+      "maxItems": 30,
       "items": {
         "$ref": "#/$defs/pair"
       }

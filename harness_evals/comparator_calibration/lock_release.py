@@ -40,6 +40,7 @@ def _artifacts() -> dict[str, str]:
     request_template = load_json(ROOT / "request-template.json")
     response_schema = load_json(ROOT / "response.schema.json")
     evidence_schema = load_json(ROOT / "evidence.schema.json")
+    semantic_contract = load_json(ROOT / "semantic-contract.json")
     holdout_plan_schema_path = PROJECT_ROOT / "holdout-plan.schema.json"
     holdout_plan_schema = load_json(holdout_plan_schema_path)
     reviews = review_artifact_hashes(manifest)
@@ -54,6 +55,7 @@ def _artifacts() -> dict[str, str]:
         ).hexdigest(),
         "response_schema_sha256": canonical_sha256(response_schema),
         "evidence_schema_sha256": canonical_sha256(evidence_schema),
+        "semantic_contract_sha256": canonical_sha256(semantic_contract),
         "holdout_plan_schema_sha256": canonical_sha256(holdout_plan_schema),
         "holdout_plan_schema_bytes_sha256": file_sha256(holdout_plan_schema_path),
         "reviewer_a_sha256": reviews["reviewer_a"],
@@ -137,7 +139,10 @@ def _release(*, test: bool) -> dict[str, Any]:
                 for pair in load_json(ROOT / "manifest.json")["pairs"]
             ),
         },
-        "criterion_support": criterion_support(load_json(ROOT / "manifest.json")),
+        "criterion_support": criterion_support(
+            load_json(ROOT / "manifest.json"),
+            load_json(ROOT / "semantic-contract.json"),
+        ),
         "invocation_namespace_sha256": hashlib.sha256(
             (
                 "software-engineering-comparator-test-namespace-v2.3"

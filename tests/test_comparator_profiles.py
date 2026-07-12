@@ -246,6 +246,26 @@ class ComparatorProfileTests(unittest.TestCase):
             ):
                 resolve_builtin_profile(BUILTIN_SOFTWARE_PROFILE_ID)
 
+    def test_descriptor_and_semantic_contract_must_agree(self) -> None:
+        for field, value in (
+            ("engine_strategy", "unknown-strategy-v1"),
+            ("artifact_kinds", ["final_output_text"]),
+        ):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as temporary:
+                root = self.copied_profile_root(Path(temporary))
+                contract_path = root / "semantic-contract.json"
+                contract = json.loads(contract_path.read_bytes())
+                contract[field] = value
+                contract_path.write_text(json.dumps(contract), encoding="utf-8")
+
+                with (
+                    self.profile_files_patch(root),
+                    self.assertRaisesRegex(
+                        ComparatorProfileError, "semantic engine contract"
+                    ),
+                ):
+                    resolve_builtin_profile(BUILTIN_SOFTWARE_PROFILE_ID)
+
     def test_symlinked_resource_fails_during_bounded_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = self.copied_profile_root(Path(temporary))

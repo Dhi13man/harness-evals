@@ -1114,7 +1114,9 @@ class ComparatorRuntime:
             release_name,
             allow_test_release=allow_test_release,
         )
-        _calibration.validate_manifest(bundle.manifest, bundle.rubric)
+        _calibration.validate_manifest(
+            bundle.manifest, bundle.rubric, bundle.semantic_contract
+        )
         summary = _calibration.validate_release(bundle)
         adapter = summary["runtime_adapter"]
         if adapter["id"] != RUNTIME_ADAPTER_ID:
@@ -1211,6 +1213,7 @@ class ComparatorRuntime:
                     "request_template",
                     "response_schema",
                     "evidence_schema",
+                    "semantic_contract",
                     release_resource,
                 )
             }
@@ -1222,13 +1225,16 @@ class ComparatorRuntime:
                 request_template=parsed_resources["request_template"],
                 response_schema=parsed_resources["response_schema"],
                 evidence_schema=parsed_resources["evidence_schema"],
+                semantic_contract=parsed_resources["semantic_contract"],
                 release=parsed_resources[release_resource],
             )
             if bundle.release.get("test_release") is True and not use_test_release:
                 raise CalibrationError(
                     "test release requires explicit use_test_release=True"
                 )
-            _calibration.validate_manifest(bundle.manifest, bundle.rubric)
+            _calibration.validate_manifest(
+                bundle.manifest, bundle.rubric, bundle.semantic_contract
+            )
             summary = _calibration.validate_profile_release(
                 bundle,
                 evaluator_root=Path(_calibration.__file__).resolve().parent,

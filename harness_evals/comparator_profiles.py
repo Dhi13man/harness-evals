@@ -34,6 +34,7 @@ _DATA_RESOURCE_KEYS = frozenset(
         "request_template",
         "response_schema",
         "evidence_schema",
+        "semantic_contract",
         "production_release",
         "test_release",
     }
@@ -54,6 +55,7 @@ _LOCAL_ARTIFACT_RESOURCES = MappingProxyType(
         "request_template_sha256": "request_template",
         "response_schema_sha256": "response_schema",
         "evidence_schema_sha256": "evidence_schema",
+        "semantic_contract_sha256": "semantic_contract",
     }
 )
 
@@ -190,7 +192,7 @@ def parse_profile_descriptor(
     }
     if set(value) != expected:
         raise ComparatorProfileError("profile descriptor fields are invalid")
-    if type(value["schema_version"]) is not int or value["schema_version"] != 1:
+    if type(value["schema_version"]) is not int or value["schema_version"] != 2:
         raise ComparatorProfileError("profile descriptor schema version is invalid")
     profile_id = value["id"]
     if (
@@ -240,7 +242,7 @@ def parse_profile_descriptor(
             "profile supported artifact kinds must be ['workspace_diff']"
         )
     return ComparatorProfileDescriptor(
-        schema_version=1,
+        schema_version=2,
         id=profile_id,
         version=version,
         engine_contract=engine_contract,
@@ -473,8 +475,22 @@ def _validate_release_resources(
             "request_template",
             "response_schema",
             "evidence_schema",
+            "semantic_contract",
         )
     }
+    semantic_contract = parsed["semantic_contract"]
+    compatible_engine_contracts = {
+        "software-change-comparator-v2.3": "eligibility-pareto-v1",
+        "eligibility-pareto-v1": "eligibility-pareto-v1",
+    }
+    if compatible_engine_contracts.get(
+        descriptor.engine_contract
+    ) != semantic_contract.get("engine_strategy") or semantic_contract.get(
+        "artifact_kinds"
+    ) != list(descriptor.supported_artifact_kinds):
+        raise ComparatorProfileError(
+            "profile descriptor differs from its semantic engine contract"
+        )
     reviews = _review_hashes(parsed["manifest"])
     release_ids: set[str] = set()
     release_contracts = (
