@@ -3354,6 +3354,9 @@ environment_minimal = (
     "ANTHROPIC_API_KEY" not in os.environ
     and {{name for name in os.environ if name.startswith("EVAL_")}} == {{
         "EVAL_WORKSPACE",
+        "EVAL_ARTIFACT_PATH",
+        "EVAL_ARTIFACT_KIND",
+        "EVAL_ARTIFACT_SHA256",
         "EVAL_CASE_ROOT",
         "EVAL_SHARED_ROOT",
         "EVAL_TOOL_BIN",
