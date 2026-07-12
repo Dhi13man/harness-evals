@@ -22,7 +22,10 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from harness_evals.comparator_profiles import resolve_builtin_profile
+from harness_evals.comparator_profiles import (
+    ComparatorProfileResources,
+    resolve_builtin_profile,
+)
 
 
 SUITE_ROOT = Path(__file__).resolve().parent
@@ -1123,6 +1126,8 @@ class ComparatorRuntime:
             resolved,
             certification_name,
             allow_missing=bundle.release["test_release"],
+            profile_only=False,
+            external_bindings_validated=True,
         )
         return cls(resolved, bundle, summary, certification)
 
@@ -1131,12 +1136,61 @@ class ComparatorRuntime:
         cls,
         profile_id: str,
         *,
+        external_suite_root: Path | None = None,
+        external_suite_manifest: Path | None = None,
+        certification_root: Path | None = None,
         use_test_release: bool = False,
         certification_name: str = "evidence/certification.json",
     ) -> "ComparatorRuntime":
         """Resolve and load one code-owned profile into a private snapshot."""
 
         profile = resolve_builtin_profile(profile_id)
+        if profile.authority_binding is None:
+            raise CalibrationError("built-in comparator profile omitted authority")
+        return cls._load_profile_resources(
+            profile,
+            external_suite_root=external_suite_root,
+            external_suite_manifest=external_suite_manifest,
+            certification_root=certification_root,
+            use_test_release=use_test_release,
+            certification_name=certification_name,
+        )
+
+    @classmethod
+    def load_diagnostic_profile(
+        cls,
+        profile: ComparatorProfileResources,
+        *,
+        use_test_release: bool = False,
+        certification_root: Path | None = None,
+        certification_name: str = "evidence/certification.json",
+    ) -> "ComparatorRuntime":
+        """Load unregistered data while keeping production authority unreachable."""
+
+        if profile.authority_binding is not None:
+            raise CalibrationError(
+                "registered profiles must load through their code-owned id"
+            )
+        return cls._load_profile_resources(
+            profile,
+            external_suite_root=None,
+            external_suite_manifest=None,
+            certification_root=certification_root,
+            use_test_release=use_test_release,
+            certification_name=certification_name,
+        )
+
+    @classmethod
+    def _load_profile_resources(
+        cls,
+        profile: ComparatorProfileResources,
+        *,
+        external_suite_root: Path | None,
+        external_suite_manifest: Path | None,
+        certification_root: Path | None,
+        use_test_release: bool,
+        certification_name: str,
+    ) -> "ComparatorRuntime":
         profile_context = ExitStack()
         try:
             resolved = profile_context.enter_context(profile.materialize()).resolve(
@@ -1148,7 +1202,7 @@ class ComparatorRuntime:
             parsed_resources = {
                 name: _calibration.parse_json_object(
                     profile.read_bytes(name).decode("utf-8"),
-                    f"profile {profile_id} resource {name}",
+                    f"profile {profile.descriptor.id} resource {name}",
                 )
                 for name in (
                     "manifest",
@@ -1175,7 +1229,24 @@ class ComparatorRuntime:
                     "test release requires explicit use_test_release=True"
                 )
             _calibration.validate_manifest(bundle.manifest, bundle.rubric)
-            summary = _calibration.validate_profile_release(bundle)
+            summary = _calibration.validate_profile_release(
+                bundle,
+                evaluator_root=Path(_calibration.__file__).resolve().parent,
+            )
+            external_bindings_validated = False
+            if (external_suite_root is None) != (external_suite_manifest is None):
+                raise CalibrationError(
+                    "packaged external bindings require suite root and manifest"
+                )
+            if external_suite_root is not None:
+                _calibration.validate_packaged_release_bindings(
+                    bundle,
+                    suite_root=external_suite_root,
+                    suite_manifest_path=external_suite_manifest,
+                    runtime_source_root=Path(__file__).resolve().parent,
+                )
+                summary = {**summary, "external_bindings_validated": True}
+                external_bindings_validated = True
             adapter = summary["runtime_adapter"]
             if adapter["id"] != RUNTIME_ADAPTER_ID:
                 raise CalibrationError(
@@ -1185,11 +1256,16 @@ class ComparatorRuntime:
                 raise CalibrationError(
                     "release is incompatible with the shared harness"
                 )
+            certification_base = (
+                resolved if certification_root is None else certification_root
+            )
             certification = _load_certification(
                 bundle,
-                resolved,
+                certification_base,
                 certification_name,
                 allow_missing=bundle.release["test_release"],
+                profile_only=True,
+                external_bindings_validated=external_bindings_validated,
             )
             return cls(
                 resolved,
@@ -1200,8 +1276,10 @@ class ComparatorRuntime:
                 profile_descriptor_sha256=profile.descriptor.descriptor_sha256,
                 profile_authority_registry_sha256=(
                     profile.authority_binding.registry_sha256
+                    if profile.authority_binding is not None
+                    else None
                 ),
-                external_bindings_validated=False,
+                external_bindings_validated=external_bindings_validated,
                 _profile_context=profile_context,
             )
         except BaseException:
@@ -1238,6 +1316,19 @@ class ComparatorRuntime:
         if not self.certification.valid:
             detail = self.certification.error or "certification is absent"
             raise CalibrationError(f"comparator live calibration is invalid: {detail}")
+
+    def require_diagnostic_calibration(self) -> None:
+        """Require calibrated comparison without granting release authority."""
+
+        if self.bundle.release["test_release"]:
+            raise CalibrationError(
+                "test comparator release cannot run a real diagnostic comparator"
+            )
+        if not self.certification.valid:
+            detail = self.certification.error or "certification is absent"
+            raise CalibrationError(
+                f"comparator diagnostic calibration is invalid: {detail}"
+            )
 
     def invocation_id(self, opaque_context: str, repetition: int, order: str) -> str:
         return _calibration.invocation_id(
@@ -1464,18 +1555,37 @@ def write_certification(
     runtime: ComparatorRuntime,
     evidence_path: Path,
     destination: Path,
+    *,
+    persistence_root: Path | None = None,
 ) -> dict[str, Any]:
     """Validate live evidence and write a non-self-referential certification."""
 
+    storage_root = (
+        runtime.root
+        if persistence_root is None
+        else Path(os.path.abspath(persistence_root))
+    )
+    if storage_root.resolve(strict=True) != storage_root or not storage_root.is_dir():
+        raise CalibrationError("certification persistence root is invalid")
     evidence_file = Path(os.path.abspath(evidence_path))
     if evidence_file.resolve(strict=True) != evidence_file:
         raise CalibrationError("certification evidence path traverses a symlink")
-    if not evidence_file.is_relative_to(runtime.root):
-        raise CalibrationError("certification evidence must remain inside release root")
+    if not evidence_file.is_relative_to(storage_root):
+        raise CalibrationError(
+            "certification evidence must remain inside its persistence root"
+        )
     evidence, _evidence_bytes, evidence_sha256 = load_private_json_capture(
         evidence_file
     )
-    result = _calibration.evaluate_evidence(runtime.bundle, evidence)
+    result = _calibration.evaluate_evidence(
+        runtime.bundle,
+        evidence,
+        profile_only=getattr(runtime, "profile_id", None) is not None,
+        evaluator_root=Path(_calibration.__file__).resolve().parent,
+        external_bindings_validated=getattr(
+            runtime, "external_bindings_validated", True
+        ),
+    )
     if not result["passed"]:
         raise CalibrationError("comparator evidence did not pass every release gate")
     model_sets = result["actual_model_sets"]
@@ -1491,7 +1601,7 @@ def write_certification(
         "schema_version": CERTIFICATION_SCHEMA_VERSION,
         "release_sha256": runtime.release_summary["release_sha256"],
         "runtime_adapter_id": RUNTIME_ADAPTER_ID,
-        "evidence_path": os.path.relpath(evidence_file, runtime.root),
+        "evidence_path": os.path.relpath(evidence_file, storage_root),
         "evidence_sha256": evidence_sha256,
         "result_sha256": canonical_sha256(result),
         "actual_models": model_sets[0],
@@ -1502,14 +1612,14 @@ def write_certification(
     target = Path(os.path.abspath(destination))
     resolved_target_parent = target.parent.resolve(strict=False)
     if (
-        not target.parent.is_relative_to(runtime.root)
-        or not resolved_target_parent.is_relative_to(runtime.root)
+        not target.parent.is_relative_to(storage_root)
+        or not resolved_target_parent.is_relative_to(storage_root)
         or resolved_target_parent != target.parent
     ):
         raise CalibrationError("comparator certification destination escapes its root")
     target.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
     target_parent = target.parent.resolve(strict=True)
-    if target_parent != target.parent or not target_parent.is_relative_to(runtime.root):
+    if target_parent != target.parent or not target_parent.is_relative_to(storage_root):
         raise CalibrationError("comparator certification destination escapes its root")
     atomic_write_private_json(target, payload)
     return payload
@@ -1521,6 +1631,8 @@ def _load_certification(
     certification_name: str,
     *,
     allow_missing: bool,
+    profile_only: bool = False,
+    external_bindings_validated: bool = True,
 ) -> RuntimeCertification:
     logical_certification_path = Path(os.path.abspath(root / certification_name))
     certification_path = logical_certification_path.resolve()
@@ -1575,7 +1687,13 @@ def _load_certification(
         )
         if evidence_sha256 != certification["evidence_sha256"]:
             raise CalibrationError("comparator evidence digest is stale")
-        result = _calibration.evaluate_evidence(bundle, evidence)
+        result = _calibration.evaluate_evidence(
+            bundle,
+            evidence,
+            profile_only=profile_only,
+            evaluator_root=Path(_calibration.__file__).resolve().parent,
+            external_bindings_validated=external_bindings_validated,
+        )
         result_sha256 = canonical_sha256(result)
         if not result["passed"] or result_sha256 != certification["result_sha256"]:
             raise CalibrationError("comparator certification result is invalid")

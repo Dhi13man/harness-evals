@@ -49,7 +49,9 @@ from harness_evals.comparator_runtime import (  # noqa: E402
     RuntimeCertification,
     SpendLedger,
     TransportExecution,
+    write_certification,
 )
+from harness_evals.comparator_profiles import BUILTIN_SOFTWARE_PROFILE_ID  # noqa: E402
 
 
 LabelMutator = Callable[[dict[str, Any], int, str], dict[str, Any]]
@@ -814,6 +816,49 @@ class CorpusTests(CalibrationTestCase):
 
 
 class EvidenceTests(CalibrationTestCase):
+    def test_packaged_runtime_loads_persistent_external_certification(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            persistence_root = Path(temporary)
+            persistence_root.chmod(0o700)
+            evidence_path = persistence_root / "evidence.json"
+            evidence_path.write_text(
+                json.dumps(build_evidence(self.bundle), sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            evidence_path.chmod(0o600)
+            certification_path = persistence_root / "certification.json"
+            compatibility = ComparatorRuntime.load(
+                ROOT,
+                release_name="tests/test-release.json",
+                allow_test_release=True,
+            )
+            try:
+                write_certification(
+                    compatibility,
+                    evidence_path,
+                    certification_path,
+                    persistence_root=persistence_root,
+                )
+            finally:
+                compatibility.close()
+
+            packaged = ComparatorRuntime.load_builtin_profile(
+                BUILTIN_SOFTWARE_PROFILE_ID,
+                external_suite_root=PROJECT_ROOT,
+                external_suite_manifest=PROJECT_ROOT / "suite.json",
+                certification_root=persistence_root,
+                certification_name="certification.json",
+                use_test_release=True,
+            )
+            try:
+                self.assertTrue(packaged.protocol_locks_valid)
+                self.assertTrue(
+                    packaged.certification.valid, packaged.certification.error
+                )
+                self.assertEqual(packaged.certification.evidence_path, evidence_path)
+            finally:
+                packaged.close()
+
     def test_successor_release_uses_shared_runtime(self) -> None:
         production = load_bundle(ROOT)
         result = evaluate_evidence(production, build_evidence(production))

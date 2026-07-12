@@ -18,7 +18,7 @@ import tempfile
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -1520,7 +1520,27 @@ class EvalRunner:
         self.suite = suite
         self._closed = False
         self._owned_providers: list[EvalProvider] = []
+        self._comparator_runtime: ComparatorRuntime | None = None
+        self._comparator_spend: dict[str, SpendLedger] = {}
+        self._generator_dispatch_ledger: _GeneratorDispatchLedger | None = None
+        self._holdout_plan: HoldoutPlan | None = None
         self._agent_provider_injected = provider is not None
+        if suite.evaluation_mode == "objective_only":
+            if suite.comparator is not None or suite.comparator_profile is not None:
+                raise RunnerError(
+                    "objective-only suites must not configure a comparator"
+                )
+            if comparator_provider is not None:
+                raise RunnerError(
+                    "objective-only suites reject injected comparator providers"
+                )
+        elif suite.evaluation_mode == "judged":
+            if suite.comparator is None or suite.comparator_profile is None:
+                raise RunnerError(
+                    "judged suites require a comparator and comparator profile"
+                )
+        else:
+            raise RunnerError(f"unsupported evaluation mode: {suite.evaluation_mode}")
         try:
             if provider is None:
                 self.agent_provider = _build_provider(suite.provider)
@@ -1528,7 +1548,10 @@ class EvalRunner:
             else:
                 self.agent_provider = provider
             self._agent_provider_instance = self.agent_provider
-            if comparator_provider is None:
+            if suite.evaluation_mode == "objective_only":
+                self.comparator_provider: EvalProvider | None = None
+            elif comparator_provider is None:
+                assert suite.comparator is not None
                 self.comparator_provider = _build_provider(suite.comparator)
                 self._owned_providers.append(self.comparator_provider)
             else:
@@ -1583,10 +1606,6 @@ class EvalRunner:
             self._shared_snapshot: _TreeSnapshot | None = None
             self._case_hashes: dict[str, str] = {}
             self._manifest_bytes = _manifest_bytes(suite)
-            self._comparator_runtime: ComparatorRuntime | None = None
-            self._comparator_spend: dict[str, SpendLedger] = {}
-            self._generator_dispatch_ledger: _GeneratorDispatchLedger | None = None
-            self._holdout_plan: HoldoutPlan | None = None
         except BaseException as initialization_error:
             try:
                 self.close()
@@ -1614,6 +1633,13 @@ class EvalRunner:
         self._owned_providers.clear()
         closed: set[int] = set()
         cleanup_failure: BaseException | None = None
+        runtime = self._comparator_runtime
+        self._comparator_runtime = None
+        if runtime is not None:
+            try:
+                runtime.close()
+            except BaseException as exc:
+                cleanup_failure = exc
         for owned_provider in reversed(providers):
             identity = id(owned_provider)
             if identity not in closed:
@@ -1640,6 +1666,19 @@ class EvalRunner:
         self._ensure_open()
         return self._preflight(selection, allow_unsealed_holdout=False)
 
+    def _effective_selection(self, selection: RunSelection) -> RunSelection:
+        if (
+            self.suite.evaluation_mode == "objective_only"
+            and not selection.verifier_only
+        ):
+            return replace(selection, verifier_only=True)
+        return selection
+
+    def _execution_mode(self, selection: RunSelection) -> str:
+        if self.suite.evaluation_mode == "objective_only":
+            return "objective_only"
+        return "verifier_only" if selection.verifier_only else "judged"
+
     def _preflight(
         self,
         selection: RunSelection,
@@ -1648,6 +1687,7 @@ class EvalRunner:
     ) -> dict[str, Any]:
         """Run the common preflight, with one internal holdout-preparation escape."""
 
+        selection = self._effective_selection(selection)
         self._assert_manifest_integrity()
         self._assert_generator_execution_policy_integrity()
         self._assert_codex_provider_binding_integrity(verify_executable=True)
@@ -1655,8 +1695,17 @@ class EvalRunner:
             selection, allow_unsealed_holdout=allow_unsealed_holdout
         )
         self._assert_injected_fake_generator_admissible(selection, cases)
-        runtime = self._load_comparator_runtime()
+        runtime = (
+            None
+            if self.suite.evaluation_mode == "objective_only"
+            else self._load_comparator_runtime()
+        )
         if selection.split == "holdout":
+            assert runtime is not None
+            if not runtime.protocol_locks_valid:
+                raise RunnerError(
+                    "holdout execution requires an authority-bound comparator profile"
+                )
             self._assert_generator_release_authority(runtime)
         repository_commit = _git_commit(self.suite.repository_root)
         repository_dirty = _git_dirty(self.suite.repository_root)
@@ -1671,6 +1720,7 @@ class EvalRunner:
             variant = variants_by_id[variant_id]
             source_records[variant.id] = self._preflight_variant(variant, cases)
         if selection.split == "holdout":
+            assert runtime is not None
             self._assert_holdout_source_authority(runtime, source_records)
         release_context_commits = {
             role: source_records[role]["source_commit"]
@@ -1765,6 +1815,7 @@ class EvalRunner:
         if selection.split == "holdout":
             _assert_release_task_content_uniqueness(case_records)
         if allow_unsealed_holdout:
+            assert runtime is not None
             self._assert_production_holdout_runtime(runtime)
             self._holdout_plan = None
             holdout_plan = None
@@ -1785,26 +1836,44 @@ class EvalRunner:
                 self.suite.provider, "billing_basis", "metered_api"
             ),
         )
-        if not selection.verifier_only:
+        if runtime is not None and not selection.verifier_only:
             _assert_comparator_plan_within_release_cap(execution_plan)
-        execution_mode = "verifier_only" if selection.verifier_only else "judged"
-        return {
+        execution_mode = self._execution_mode(selection)
+        comparator_evidence: dict[str, Any] | None = None
+        if runtime is not None:
+            assert self.comparator_provider is not None
+            assert self.suite.comparator is not None
+            comparator_evidence = {
+                "name": self.comparator_provider.name,
+                "version": self.comparator_provider.version,
+                "requested_model": self.suite.comparator.model,
+                "release_sha256": runtime.release_summary["release_sha256"],
+                "calibration_evidence_sha256": runtime.certification.evidence_sha256,
+                "protocol_locks_valid": runtime.protocol_locks_valid,
+                "live_calibration_valid": runtime.live_calibration_valid,
+                "certification": runtime.certification.as_json(),
+            }
+            if self.suite.schema_version >= 3:
+                assert self.suite.comparator_profile is not None
+                comparator_evidence.update(
+                    {
+                        "profile_kind": self.suite.comparator_profile.kind,
+                        "profile_id": runtime.profile_id,
+                        "profile_descriptor_sha256": runtime.profile_descriptor_sha256,
+                        "profile_authority_registry_sha256": (
+                            runtime.profile_authority_registry_sha256
+                        ),
+                        "profile_locks_valid": runtime.profile_locks_valid,
+                    }
+                )
+        preflight_result = {
             "execution_mode": execution_mode,
             "suite_id": self.suite.suite_id,
             "manifest_sha256": self.suite.manifest_hash,
             "repository_commit": repository_commit,
             "repository_dirty": repository_dirty,
             "provider": self._generator_provider_binding(),
-            "comparator": {
-                "name": self.comparator_provider.name,
-                "version": self.comparator_provider.version,
-                "requested_model": self.suite.comparator.model,
-                "release_sha256": runtime.release_summary["release_sha256"],
-                "calibration_evidence_sha256": (runtime.certification.evidence_sha256),
-                "protocol_locks_valid": runtime.protocol_locks_valid,
-                "live_calibration_valid": runtime.live_calibration_valid,
-                "certification": runtime.certification.as_json(),
-            },
+            "comparator": comparator_evidence,
             "selection": {
                 "split": selection.split,
                 "case_ids": [case.id for case in cases],
@@ -1820,6 +1889,13 @@ class EvalRunner:
             "sources": source_records,
             "cases": case_records,
         }
+        if self.suite.evaluation_mode == "objective_only":
+            preflight_result["objective_acceptance"] = {
+                "policy_id": "verifier-pass-v1",
+                "winner_rule": "sole-passing-arm",
+                "equal_rule": "tie",
+            }
+        return preflight_result
 
     def run(
         self,
@@ -1831,12 +1907,14 @@ class EvalRunner:
         """Run selected comparisons, or return a write-free validated plan."""
 
         self._ensure_open()
+        selection = self._effective_selection(selection)
         preflight = self.preflight(selection)
         cases, comparisons = self._selected(selection)
         seed = self.suite.seed if selection.seed is None else selection.seed
         if dry_run:
-            execution_mode = "verifier_only" if selection.verifier_only else "judged"
-            return {
+            execution_mode = self._execution_mode(selection)
+            comparator_evidence = preflight["comparator"]
+            dry_run_result = {
                 "schema_version": 1,
                 "dry_run": True,
                 "execution_mode": execution_mode,
@@ -1844,17 +1922,38 @@ class EvalRunner:
                 "planned_pair_runs": sum(
                     comparison.repetitions * len(cases) for comparison in comparisons
                 ),
-                "protocol_locks_valid": preflight["comparator"]["protocol_locks_valid"],
-                "live_calibration_valid": self._load_comparator_runtime().live_calibration_valid,
+                "protocol_locks_valid": (
+                    comparator_evidence["protocol_locks_valid"]
+                    if comparator_evidence is not None
+                    else None
+                ),
+                "live_calibration_valid": (
+                    comparator_evidence["live_calibration_valid"]
+                    if comparator_evidence is not None
+                    else None
+                ),
             }
-        if not selection.verifier_only:
+            if self.suite.schema_version >= 3:
+                dry_run_result["profile_locks_valid"] = (
+                    comparator_evidence["profile_locks_valid"]
+                    if comparator_evidence is not None
+                    else None
+                )
+            return dry_run_result
+        runtime: ComparatorRuntime | None = None
+        if self.suite.evaluation_mode == "judged":
             runtime = self._load_comparator_runtime()
+        if runtime is not None and not selection.verifier_only:
+            assert self.suite.comparator is not None
             if not (
                 runtime.bundle.release["test_release"]
                 and self.suite.comparator.kind == "fake"
             ):
                 try:
-                    runtime.require_live_calibration()
+                    if self.suite.comparator_profile.kind == "suite_local":
+                        runtime.require_diagnostic_calibration()
+                    else:
+                        runtime.require_live_calibration()
                 except CalibrationError as exc:
                     raise RunnerError(str(exc)) from exc
         if output_dir is None:
@@ -1875,17 +1974,19 @@ class EvalRunner:
                             f"root could not be removed: {cleanup_error}"
                         ) from cleanup_error
                 raise
-        runtime = self._load_comparator_runtime()
-        spend_root = output / "comparator-spend"
-        _mkdir_private(spend_root, parents=False, exist_ok=False)
-        run_cap = runtime.bundle.release["execution_limits"]["run_max_usd"]
-        self._comparator_spend = {
-            comparison.id: SpendLedger(
-                run_cap,
-                spend_root / f"{comparison.id}.jsonl",
-            )
-            for comparison in comparisons
-        }
+        if runtime is None:
+            self._comparator_spend = {}
+        else:
+            spend_root = output / "comparator-spend"
+            _mkdir_private(spend_root, parents=False, exist_ok=False)
+            run_cap = runtime.bundle.release["execution_limits"]["run_max_usd"]
+            self._comparator_spend = {
+                comparison.id: SpendLedger(
+                    run_cap,
+                    spend_root / f"{comparison.id}.jsonl",
+                )
+                for comparison in comparisons
+            }
         _write_bytes(output / "manifest.snapshot.json", self._manifest_bytes)
         dispatch_ledger = _GeneratorDispatchLedger(
             result_root=output,
@@ -1922,7 +2023,8 @@ class EvalRunner:
                 selection,
                 holdout_plan=self._holdout_plan,
                 release_authority_validated=(
-                    runtime.protocol_locks_valid
+                    runtime is not None
+                    and runtime.protocol_locks_valid
                     and not runtime.bundle.release["test_release"]
                     and runtime.certification.valid
                     and runtime.certification.evidence_sha256 is not None
@@ -1950,13 +2052,14 @@ class EvalRunner:
                     item["maximum_usd"] for item in ledgers.values()
                 ),
             }
+            aggregate["execution_mode"] = self._execution_mode(selection)
             if self._generator_dispatch_ledger is None:
                 raise RunnerError("generator dispatch ledger was not initialized")
             generator_dispatch_audit = self._generator_dispatch_ledger.audit()
             if generator_dispatch_audit["unresolved_attempts"]:
                 raise RunnerError("generator dispatch ledger has unresolved attempts")
             aggregate["generator_dispatch_ledger"] = generator_dispatch_audit
-            execution_mode = "verifier_only" if selection.verifier_only else "judged"
+            execution_mode = self._execution_mode(selection)
             result = {
                 "schema_version": 1,
                 "execution_mode": execution_mode,
@@ -1993,6 +2096,10 @@ class EvalRunner:
         """Prepare, write, and prove one sealed production holdout plan."""
 
         self._ensure_open()
+        if self.suite.evaluation_mode == "objective_only":
+            raise RunnerError(
+                "objective-only holdout authority is not available in schema version 3"
+            )
         output = _new_external_plan_path(output_path, self.suite.root)
         consumption_record_path = _consumption_record_path_for_plan(output)
         _validate_consumption_record_target(
@@ -2347,20 +2454,92 @@ class EvalRunner:
 
     def _load_comparator_runtime(self) -> ComparatorRuntime:
         if self._comparator_runtime is None:
-            test_release = self.suite.comparator.kind == "fake"
-            try:
-                self._comparator_runtime = ComparatorRuntime.load(
-                    self.suite.root / "harness_evals" / "comparator_calibration",
-                    release_name=(
-                        "tests/test-release.json" if test_release else "release.json"
-                    ),
-                    allow_test_release=test_release,
+            comparator = self.suite.comparator
+            profile = self.suite.comparator_profile
+            if comparator is None or profile is None:
+                raise RunnerError(
+                    "objective-only suites do not have comparator runtimes"
                 )
+            test_release = comparator.kind == "fake"
+            try:
+                if self.suite.schema_version == 2:
+                    self._comparator_runtime = ComparatorRuntime.load(
+                        self.suite.root / "harness_evals" / "comparator_calibration",
+                        release_name=(
+                            "tests/test-release.json"
+                            if test_release
+                            else "release.json"
+                        ),
+                        allow_test_release=test_release,
+                    )
+                elif profile.kind == "builtin":
+                    certification_root, certification_name = (
+                        self._profile_certification_location(
+                            profile.id, legacy_compatible=True
+                        )
+                    )
+                    self._comparator_runtime = ComparatorRuntime.load_builtin_profile(
+                        profile.id,
+                        external_suite_root=self.suite.root,
+                        external_suite_manifest=self.suite.path,
+                        certification_root=certification_root,
+                        use_test_release=test_release,
+                        certification_name=certification_name,
+                    )
+                elif profile.kind == "suite_local" and profile.resources is not None:
+                    certification_root, certification_name = (
+                        self._profile_certification_location(
+                            profile.id, legacy_compatible=False
+                        )
+                    )
+                    self._comparator_runtime = (
+                        ComparatorRuntime.load_diagnostic_profile(
+                            profile.resources,
+                            use_test_release=test_release,
+                            certification_root=certification_root,
+                            certification_name=certification_name,
+                        )
+                    )
+                else:
+                    raise RunnerError("comparator profile binding is incomplete")
             except (CalibrationError, OSError, ValueError) as exc:
                 raise RunnerError(
                     f"comparator protocol lock is invalid: {exc}"
                 ) from exc
         return self._comparator_runtime
+
+    def _profile_certification_location(
+        self, profile_id: str, *, legacy_compatible: bool
+    ) -> tuple[Path, str]:
+        legacy_root = self.suite.root / "harness_evals/comparator_calibration"
+        legacy_evidence = legacy_root / "evidence"
+        if legacy_compatible and legacy_root.is_symlink():
+            raise RunnerError("comparator certification root traverses a symlink")
+        if legacy_compatible and legacy_evidence.is_symlink():
+            raise RunnerError("comparator certification root traverses a symlink")
+        if (
+            legacy_compatible
+            and legacy_evidence.exists()
+            and not legacy_evidence.is_dir()
+        ):
+            raise RunnerError("comparator certification root must be a directory")
+        if legacy_compatible and legacy_root.is_dir():
+            logical = legacy_root
+            certification_name = "evidence/certification.json"
+        else:
+            logical = self.suite.root / "comparator-evidence" / profile_id
+            certification_name = "certification.json"
+        current = self.suite.root
+        for part in logical.relative_to(self.suite.root).parts:
+            current = current / part
+            if current.is_symlink():
+                raise RunnerError("comparator certification root traverses a symlink")
+        resolved = logical.resolve(strict=False)
+        if not resolved.is_relative_to(self.suite.root):
+            raise RunnerError("comparator certification root escapes the suite")
+        if resolved.exists() and not resolved.is_dir():
+            raise RunnerError("comparator certification root must be a directory")
+        return resolved, certification_name
 
     def _assert_manifest_integrity(self) -> None:
         try:
@@ -2383,6 +2562,10 @@ class EvalRunner:
         if len(set(selection.comparison_ids)) != len(selection.comparison_ids):
             raise RunnerError("comparison selection must not contain duplicates")
         if selection.split == "holdout":
+            if self.suite.evaluation_mode == "objective_only":
+                raise RunnerError(
+                    "objective-only holdout authority is not available in schema version 3"
+                )
             if allow_unsealed_holdout and selection.holdout_plan is not None:
                 raise RunnerError("holdout preparation cannot consume an existing plan")
             if not allow_unsealed_holdout and selection.holdout_plan is None:
@@ -2583,6 +2766,8 @@ class EvalRunner:
             raise RunnerError(f"invalid holdout plan: {exc}") from exc
         self._holdout_plan = plan
         evidence = plan.as_evidence()
+        if self.suite.comparator is None:
+            raise RunnerError("holdout plan requires a configured comparator")
         evidence["manifest_bound_models"] = {
             "generator": self.suite.provider.model,
             "comparator": self.suite.comparator.model,
@@ -2808,15 +2993,23 @@ class EvalRunner:
         position_bias = False
         control_passed = arms["control"]["passed"]
         treatment_passed = arms["treatment"]["passed"]
+        objective_only = self.suite.evaluation_mode == "objective_only"
         if pair_errors:
             final_winner = "inconclusive"
             winner_basis = "infrastructure_error"
+        elif objective_only and control_passed == treatment_passed:
+            final_winner = "tie"
+            winner_basis = "verifier-pass-v1"
         elif treatment_passed and not control_passed:
             final_winner = "treatment"
-            winner_basis = "objective_verifier"
+            winner_basis = (
+                "verifier-pass-v1" if objective_only else "objective_verifier"
+            )
         elif control_passed and not treatment_passed:
             final_winner = "control"
-            winner_basis = "objective_verifier"
+            winner_basis = (
+                "verifier-pass-v1" if objective_only else "objective_verifier"
+            )
         elif not control_passed and not treatment_passed:
             final_winner = "unqualified"
             winner_basis = "objective_verifier"
@@ -3529,6 +3722,8 @@ class EvalRunner:
                 f"comparator spend ledger was not initialized for {comparison.id}"
             )
         runtime = self._load_comparator_runtime()
+        if case.comparator_contract is None:
+            raise RunnerError("judged case omitted its comparator contract")
         opaque_id = (
             "runtime-"
             + hashlib.sha256(
@@ -3550,6 +3745,8 @@ class EvalRunner:
         orders = ("AB", "BA")
 
         def compare_one(index: int, order: str) -> dict[str, Any]:
+            if self.suite.comparator is None or self.comparator_provider is None:
+                raise RunnerError("judged comparison requires a comparator provider")
             request_bytes = runtime.request_bytes(pair, repetition, order)
             request = ComparatorRequest(
                 pair=pair,
@@ -3635,15 +3832,21 @@ def _source_json(source: SourceMaterial | None) -> dict[str, Any] | None:
 def _execution_plan(
     cases: tuple[CaseSpec, ...],
     comparisons: tuple[ComparisonSpec, ...],
-    runtime: ComparatorRuntime,
+    runtime: ComparatorRuntime | None,
     *,
     agent_per_invocation_max_usd: float | None,
     agent_billing_basis: str,
 ) -> dict[str, Any]:
-    comparator_per_call = runtime.bundle.release["execution_limits"][
-        "per_invocation_max_usd"
-    ]
-    comparator_run_cap = runtime.bundle.release["execution_limits"]["run_max_usd"]
+    comparator_per_call = (
+        runtime.bundle.release["execution_limits"]["per_invocation_max_usd"]
+        if runtime is not None
+        else 0.0
+    )
+    comparator_run_cap = (
+        runtime.bundle.release["execution_limits"]["run_max_usd"]
+        if runtime is not None
+        else 0.0
+    )
     if agent_billing_basis == "chatgpt_subscription":
         if agent_per_invocation_max_usd is not None:
             raise RunnerError(
@@ -3662,7 +3865,7 @@ def _execution_plan(
     for comparison in comparisons:
         pair_runs = comparison.repetitions * len(cases)
         agent_calls = pair_runs * 2
-        comparator_calls = pair_runs * 2
+        comparator_calls = pair_runs * 2 if runtime is not None else 0
         agent_exposure = (
             None if agent_per_call is None else agent_calls * agent_per_call
         )
@@ -4982,13 +5185,15 @@ def _release_case_fingerprint(
 ) -> str:
     """Hash canonical statistical task content, excluding evaluation mechanics."""
 
-    contract = {
-        **case.comparator_contract,
-        "requirements": sorted(
-            case.comparator_contract["requirements"],
-            key=lambda requirement: _canonical_json_bytes(requirement),
-        ),
-    }
+    contract = None
+    if case.comparator_contract is not None:
+        contract = {
+            **case.comparator_contract,
+            "requirements": sorted(
+                case.comparator_contract["requirements"],
+                key=lambda requirement: _canonical_json_bytes(requirement),
+            ),
+        }
     payload = {
         "comparator_contract": contract,
         "context_content_sha256s": {

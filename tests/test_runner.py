@@ -17,6 +17,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from jsonschema import Draft202012Validator
+
 
 HARNESS_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HARNESS_ROOT))
@@ -515,6 +517,65 @@ class SuiteFixture:
         self.manifest_path.write_text(
             json.dumps(self.manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
+
+    def use_v3_judged(self, profile: dict[str, str] | None = None) -> None:
+        self.manifest["schema_version"] = 3
+        self.manifest["evaluation_mode"] = "judged"
+        self.manifest["comparator_profile"] = profile or {
+            "kind": "builtin",
+            "id": "software-engineering-v2.3",
+        }
+        self.save_manifest()
+
+    def use_v3_objective(self) -> None:
+        self.manifest["schema_version"] = 3
+        self.manifest["evaluation_mode"] = "objective_only"
+        self.manifest.pop("comparator", None)
+        self.manifest.pop("comparator_profile", None)
+        for case in self.manifest["cases"]:
+            case.pop("comparator_contract", None)
+        self.save_manifest()
+
+    def create_data_profile(
+        self, relative: str, *, profile_id: str = "suite-local-software-v2.3"
+    ) -> Path:
+        destination = self.suite_root / relative
+        shutil.copytree(
+            self.suite_root / "harness_evals/comparator_calibration",
+            destination,
+        )
+        descriptor_path = destination / "profile.json"
+        descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
+        descriptor["id"] = profile_id
+        for field in ("calibration_engine", "collector", "certifier"):
+            del descriptor["resources"][field]
+        descriptor_bytes = (
+            json.dumps(descriptor, indent=2, sort_keys=True) + "\n"
+        ).encode("utf-8")
+        descriptor_path.write_bytes(descriptor_bytes)
+        descriptor_sha256 = hashlib.sha256(descriptor_bytes).hexdigest()
+        for release_path in (
+            destination / "release.json",
+            destination / "tests/test-release.json",
+        ):
+            release = json.loads(release_path.read_text(encoding="utf-8"))
+            release["artifacts"]["profile_descriptor_sha256"] = descriptor_sha256
+            release_path.write_text(
+                json.dumps(release, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        for name in ("calibration.py", "collect.py", "certify.py"):
+            (destination / name).unlink()
+        return destination
+
+    def align_builtin_profile_authority(self) -> None:
+        authority_bytes = (HARNESS_ROOT / "baseline-authority.json").read_bytes()
+        authority = json.loads(authority_bytes)
+        (self.suite_root / "baseline-authority.json").write_bytes(authority_bytes)
+        for variant in self.manifest["variants"]:
+            if variant["id"] == "original":
+                variant["git_ref"] = authority["original_commit"]
+        self.save_manifest()
 
     def codex_suite(self, suite: SuiteSpec) -> SuiteSpec:
         return replace(
@@ -1614,6 +1675,21 @@ class RunnerIntegrationTests(unittest.TestCase):
         self.assertEqual(result["planned_pair_runs"], 3)
         self.assertTrue(result["protocol_locks_valid"])
         self.assertFalse(result["live_calibration_valid"])
+        self.assertNotIn("profile_locks_valid", result)
+        self.assertNotIn("objective_acceptance", result["preflight"])
+        self.assertEqual(
+            set(result["preflight"]["comparator"]),
+            {
+                "name",
+                "version",
+                "requested_model",
+                "release_sha256",
+                "calibration_evidence_sha256",
+                "protocol_locks_valid",
+                "live_calibration_valid",
+                "certification",
+            },
+        )
         self.assertFalse(output.exists())
         self.assertEqual(provider.agent_requests, [])
         self.assertEqual(provider.comparator_requests, [])
@@ -4815,6 +4891,150 @@ class ManifestValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ManifestError, "unknown keys"):
             load_suite(self.fixture.manifest_path)
 
+    def test_v3_judged_requires_explicit_profile_and_contract(self) -> None:
+        schema = json.loads((HARNESS_ROOT / "suite.schema.json").read_text())
+        self.fixture.use_v3_judged()
+        payload = copy.deepcopy(self.fixture.manifest)
+        self.assertEqual(list(Draft202012Validator(schema).iter_errors(payload)), [])
+        suite = load_suite(self.fixture.manifest_path)
+        self.assertEqual(suite.evaluation_mode, "judged")
+        self.assertEqual(suite.comparator_profile.kind, "builtin")
+        self.assertEqual(suite.comparator_profile.id, "software-engineering-v2.3")
+
+        mutations = []
+        missing_profile = copy.deepcopy(payload)
+        del missing_profile["comparator_profile"]
+        mutations.append(missing_profile)
+        missing_contract = copy.deepcopy(payload)
+        del missing_contract["cases"][0]["comparator_contract"]
+        mutations.append(missing_contract)
+        unknown_profile = copy.deepcopy(payload)
+        unknown_profile["comparator_profile"]["id"] = "unknown-profile"
+        mutations.append(unknown_profile)
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                self.assertTrue(
+                    list(Draft202012Validator(schema).iter_errors(mutation))
+                )
+                self.fixture.manifest = mutation
+                self.fixture.save_manifest()
+                with self.assertRaises(ManifestError):
+                    load_suite(self.fixture.manifest_path)
+
+    def test_v3_objective_forbids_comparator_fields_and_contract(self) -> None:
+        schema = json.loads((HARNESS_ROOT / "suite.schema.json").read_text())
+        self.fixture.use_v3_objective()
+        payload = copy.deepcopy(self.fixture.manifest)
+        self.assertEqual(list(Draft202012Validator(schema).iter_errors(payload)), [])
+        suite = load_suite(self.fixture.manifest_path)
+        self.assertEqual(suite.evaluation_mode, "objective_only")
+        self.assertIsNone(suite.comparator)
+        self.assertIsNone(suite.comparator_profile)
+        self.assertIsNone(suite.cases[0].comparator_contract)
+
+        mutations = []
+        comparator = copy.deepcopy(payload)
+        comparator["comparator"] = self.fixture._manifest()["comparator"]
+        mutations.append(comparator)
+        profile = copy.deepcopy(payload)
+        profile["comparator_profile"] = {
+            "kind": "builtin",
+            "id": "software-engineering-v2.3",
+        }
+        mutations.append(profile)
+        contract = copy.deepcopy(payload)
+        contract["cases"][0]["comparator_contract"] = self.fixture._manifest()["cases"][
+            0
+        ]["comparator_contract"]
+        mutations.append(contract)
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                self.assertTrue(
+                    list(Draft202012Validator(schema).iter_errors(mutation))
+                )
+                self.fixture.manifest = mutation
+                self.fixture.save_manifest()
+                with self.assertRaises(ManifestError):
+                    load_suite(self.fixture.manifest_path)
+
+    def test_suite_local_profile_is_contained_and_never_authoritative(self) -> None:
+        self.fixture.create_data_profile("profiles/local")
+        self.fixture.use_v3_judged({"kind": "suite_local", "path": "profiles/local"})
+        suite = load_suite(self.fixture.manifest_path)
+        self.assertEqual(suite.comparator_profile.kind, "suite_local")
+        self.assertIsNone(suite.comparator_profile.resources.authority_binding)
+        self.assertNotIn(
+            "calibration_engine",
+            suite.comparator_profile.resources.descriptor.resources_by_name,
+        )
+        self.assertFalse(
+            (self.fixture.suite_root / "profiles/local/calibration.py").exists()
+        )
+        provider = self.fixture.provider()
+        with EvalRunner(suite, provider, provider) as runner:
+            preflight = runner.preflight(
+                RunSelection(comparison_ids=("without-current",))
+            )
+        self.assertEqual(
+            preflight["comparator"]["profile_id"],
+            "suite-local-software-v2.3",
+        )
+        self.assertEqual(preflight["comparator"]["profile_kind"], "suite_local")
+        self.assertIsNone(preflight["comparator"]["profile_authority_registry_sha256"])
+        self.assertTrue(preflight["comparator"]["profile_locks_valid"])
+        self.assertFalse(preflight["comparator"]["protocol_locks_valid"])
+
+    def test_suite_local_profile_rejects_escape_symlink_and_drift(self) -> None:
+        outside = self.fixture.create_data_profile("../outside-profile")
+        link = self.fixture.suite_root / "linked-profile"
+        link.symlink_to(outside, target_is_directory=True)
+        for path, message in (
+            ("../outside-profile", "canonical suite-relative"),
+            ("linked-profile", "must not traverse a symlink"),
+        ):
+            with self.subTest(path=path):
+                self.fixture.manifest = self.fixture._manifest()
+                self.fixture.use_v3_judged({"kind": "suite_local", "path": path})
+                with self.assertRaisesRegex(ManifestError, message):
+                    load_suite(self.fixture.manifest_path)
+
+        local_profile = self.fixture.create_data_profile("profiles/drifted")
+        manifest = local_profile / "manifest.json"
+        manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
+        manifest_payload["_drift"] = True
+        manifest.write_text(json.dumps(manifest_payload), encoding="utf-8")
+        self.fixture.manifest = self.fixture._manifest()
+        self.fixture.use_v3_judged({"kind": "suite_local", "path": "profiles/drifted"})
+        with self.assertRaisesRegex(ManifestError, "invalid comparator profile"):
+            load_suite(self.fixture.manifest_path)
+
+    def test_suite_local_profile_cannot_shadow_builtin_identity(self) -> None:
+        self.fixture.create_data_profile(
+            "profiles/shadow", profile_id="software-engineering-v2.3"
+        )
+        self.fixture.use_v3_judged({"kind": "suite_local", "path": "profiles/shadow"})
+        with self.assertRaisesRegex(ManifestError, "must not shadow a built-in id"):
+            load_suite(self.fixture.manifest_path)
+
+    def test_suite_local_profile_cannot_prepare_holdout(self) -> None:
+        self.fixture.create_data_profile("profiles/local")
+        self.fixture.use_v3_judged({"kind": "suite_local", "path": "profiles/local"})
+        self.fixture.configure_holdout(skills=("demo",))
+        suite = load_suite(self.fixture.manifest_path)
+        provider = self.fixture.provider()
+        with EvalRunner(suite, provider, provider) as runner:
+            with self.assertRaisesRegex(
+                RunnerError, "authority-bound comparator profile"
+            ):
+                runner.prepare_holdout_plan(
+                    output_path=self.fixture.root / "local-holdout.json",
+                    plan_id="local-holdout",
+                    reviewers=("reviewer-a", "reviewer-b"),
+                    freeze_record="freeze-record",
+                    seal_record="seal-record",
+                )
+        self.assertFalse((self.fixture.root / "local-holdout.json").exists())
+
     def test_required_tools_and_worktree_source_ref_are_mandatory(self) -> None:
         del self.fixture.manifest["cases"][0]["verifier"]["required_tools"]
         self.fixture.save_manifest()
@@ -4963,6 +5183,181 @@ class ManifestValidationTests(unittest.TestCase):
         self.assertEqual(public.split, "public")
 
 
+class SchemaV3RunnerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        test_root = Path.home() / ".cache" / "skill-eval-tests"
+        test_root.mkdir(parents=True, exist_ok=True)
+        self.temporary = tempfile.TemporaryDirectory(dir=test_root)
+        self.addCleanup(self.temporary.cleanup)
+        self.fixture = SuiteFixture(Path(self.temporary.name))
+
+    def test_builtin_profile_runtime_is_selected_by_id(self) -> None:
+        self.fixture.use_v3_judged()
+        self.fixture.align_builtin_profile_authority()
+        suite = load_suite(self.fixture.manifest_path)
+        provider = self.fixture.provider()
+        with EvalRunner(suite, provider, provider) as runner:
+            preflight = runner.preflight(
+                RunSelection(comparison_ids=("without-current",))
+            )
+        comparator = preflight["comparator"]
+        self.assertEqual(comparator["profile_kind"], "builtin")
+        self.assertEqual(comparator["profile_id"], "software-engineering-v2.3")
+        self.assertRegex(comparator["profile_descriptor_sha256"], r"^[0-9a-f]{64}$")
+        self.assertRegex(
+            comparator["profile_authority_registry_sha256"], r"^[0-9a-f]{64}$"
+        )
+        self.assertTrue(comparator["profile_locks_valid"])
+        self.assertTrue(comparator["protocol_locks_valid"])
+
+    def test_builtin_certification_root_rejects_symlink_before_dispatch(self) -> None:
+        self.fixture.use_v3_judged()
+        self.fixture.align_builtin_profile_authority()
+        evidence = (
+            self.fixture.suite_root / "harness_evals/comparator_calibration/evidence"
+        )
+        evidence.symlink_to(self.fixture.root, target_is_directory=True)
+        suite = load_suite(self.fixture.manifest_path)
+        provider = self.fixture.provider()
+        with EvalRunner(suite, provider, provider) as runner:
+            with self.assertRaisesRegex(
+                RunnerError, "certification root traverses a symlink"
+            ):
+                runner.preflight(RunSelection(comparison_ids=("without-current",)))
+        self.assertEqual(provider.agent_requests, [])
+        self.assertEqual(provider.comparator_requests, [])
+
+    def test_objective_only_constructs_no_comparator_and_rejects_injection(
+        self,
+    ) -> None:
+        self.fixture.use_v3_objective()
+        suite = load_suite(self.fixture.manifest_path)
+        injected = self.fixture.provider()
+        with self.assertRaisesRegex(RunnerError, "reject injected comparator"):
+            EvalRunner(suite, injected, injected)
+
+        built = self.fixture.provider()
+        with patch("harness_evals.runner._build_provider", return_value=built) as build:
+            with EvalRunner(suite) as runner:
+                self.assertIsNone(runner.comparator_provider)
+        build.assert_called_once_with(suite.provider)
+
+    def test_objective_only_run_uses_verifiers_without_comparator_spend(self) -> None:
+        self.fixture.use_v3_objective()
+        suite = load_suite(self.fixture.manifest_path)
+        provider = self.fixture.provider()
+        output = self.fixture.root / "objective-result"
+        with EvalRunner(suite, provider) as runner:
+            result = runner.run(RunSelection(), output_dir=output)
+
+        self.assertEqual(result["execution_mode"], "objective_only")
+        self.assertEqual(result["preflight"]["execution_mode"], "objective_only")
+        self.assertIsNone(result["preflight"]["comparator"])
+        self.assertEqual(result["aggregate"]["execution_mode"], "objective_only")
+        self.assertFalse(result["aggregate"]["final_release_authorized"])
+        self.assertEqual(provider.comparator_requests, [])
+        self.assertEqual(len(provider.agent_requests), 12)
+        self.assertFalse((output / "comparator-spend").exists())
+        self.assertEqual(
+            result["aggregate"]["comparator_spend_ledgers"],
+            {
+                "by_comparison": {},
+                "total_charged_usd": 0,
+                "total_maximum_usd": 0,
+            },
+        )
+        self.assertTrue(
+            all(
+                pair["winner_basis"] == "verifier-pass-v1"
+                and pair["final_winner"] == "tie"
+                and pair["comparator_trials"] == []
+                for pair in result["pairs"]
+            )
+        )
+
+    def test_objective_only_equal_failures_tie_and_sole_pass_wins(self) -> None:
+        self.fixture.use_v3_objective()
+
+        self.fixture.set_verifier(
+            _PASSING_VERIFIER.replace(
+                'passed = answer.is_file() and bool(answer.read_text(encoding="utf-8").strip())',
+                "passed = False",
+            )
+        )
+        suite = load_suite(self.fixture.manifest_path)
+        both_fail_provider = self.fixture.provider()
+        with EvalRunner(suite, both_fail_provider) as runner:
+            both_fail = runner.run(
+                RunSelection(comparison_ids=("without-current",)),
+                output_dir=self.fixture.root / "objective-both-fail",
+            )
+        self.assertTrue(
+            all(
+                pair["final_winner"] == "tie"
+                and pair["winner_basis"] == "verifier-pass-v1"
+                for pair in both_fail["pairs"]
+            )
+        )
+        self.assertFalse(both_fail["passed"])
+
+        self.fixture.set_verifier(
+            _PASSING_VERIFIER.replace(
+                'passed = answer.is_file() and bool(answer.read_text(encoding="utf-8").strip())',
+                'passed = answer.is_file() and "improved" in answer.read_text(encoding="utf-8")',
+            )
+        )
+        suite = load_suite(self.fixture.manifest_path)
+        sole_pass_provider = self.fixture.provider()
+        with EvalRunner(suite, sole_pass_provider) as runner:
+            sole_pass = runner.run(
+                RunSelection(comparison_ids=("without-current",)),
+                output_dir=self.fixture.root / "objective-sole-pass",
+            )
+        self.assertTrue(
+            all(
+                pair["final_winner"] == "treatment"
+                and pair["winner_basis"] == "verifier-pass-v1"
+                for pair in sole_pass["pairs"]
+            )
+        )
+
+    def test_objective_only_dry_run_is_write_free_and_holdout_is_denied(self) -> None:
+        self.fixture.use_v3_objective()
+        suite = load_suite(self.fixture.manifest_path)
+        provider = self.fixture.provider()
+        output = self.fixture.root / "unused-output"
+        with EvalRunner(suite, provider) as runner:
+            dry_run = runner.run(RunSelection(), output_dir=output, dry_run=True)
+            self.assertEqual(dry_run["execution_mode"], "objective_only")
+            self.assertIsNone(dry_run["profile_locks_valid"])
+            self.assertIsNone(dry_run["protocol_locks_valid"])
+            self.assertIsNone(dry_run["live_calibration_valid"])
+            self.assertEqual(
+                dry_run["preflight"]["plan"]["maximum_comparator_calls"], 0
+            )
+            self.assertEqual(
+                dry_run["preflight"]["plan"]["maximum_comparator_exposure_usd"],
+                0,
+            )
+            with self.assertRaisesRegex(
+                RunnerError, "objective-only holdout authority"
+            ):
+                runner.preflight(RunSelection(split="holdout"))
+            with self.assertRaisesRegex(
+                RunnerError, "objective-only holdout authority"
+            ):
+                runner.prepare_holdout_plan(
+                    output_path=self.fixture.root / "holdout.json",
+                    plan_id="objective-holdout",
+                    reviewers=("reviewer-a", "reviewer-b"),
+                    freeze_record="freeze-record",
+                    seal_record="seal-record",
+                )
+        self.assertFalse(output.exists())
+        self.assertEqual(provider.agent_requests, [])
+        self.assertEqual(provider.comparator_requests, [])
+
+
 class CheckedInSuiteTests(unittest.TestCase):
     def test_holdout_plan_schema_is_strict_and_documents_trust_boundary(self) -> None:
         schema = json.loads(
@@ -4990,6 +5385,25 @@ class CheckedInSuiteTests(unittest.TestCase):
         self.assertIn(
             "shared_tree_sha256",
             schema["properties"]["cases"]["items"]["required"],
+        )
+
+    def test_suite_schema_supports_strict_v2_and_v3_modes(self) -> None:
+        schema = json.loads(
+            (HARNESS_ROOT / "suite.schema.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            [branch["$ref"] for branch in schema["oneOf"]],
+            ["#/$defs/suiteV2", "#/$defs/suiteV3"],
+        )
+        self.assertEqual(
+            schema["$defs"]["suiteV2"]["properties"]["schema_version"]["const"], 2
+        )
+        self.assertEqual(
+            schema["$defs"]["suiteV3"]["properties"]["schema_version"]["const"], 3
+        )
+        self.assertEqual(
+            schema["$defs"]["suiteV3"]["properties"]["evaluation_mode"]["enum"],
+            ["judged", "objective_only"],
         )
 
     def test_gcc_attestation_includes_derived_driver_closure(self) -> None:

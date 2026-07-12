@@ -131,6 +131,53 @@ class ComparatorProfileTests(unittest.TestCase):
         finally:
             runtime.close()
 
+    def test_packaged_profile_matches_compatibility_runtime_bindings(self) -> None:
+        project_root = Path(harness_package.__file__).resolve().parent.parent
+        packaged = ComparatorRuntime.load_builtin_profile(
+            BUILTIN_SOFTWARE_PROFILE_ID,
+            external_suite_root=project_root,
+            external_suite_manifest=project_root / "suite.json",
+            certification_root=(
+                project_root / "comparator-evidence" / BUILTIN_SOFTWARE_PROFILE_ID
+            ),
+            certification_name="certification.json",
+        )
+        compatibility = ComparatorRuntime.load(
+            project_root / "harness_evals/comparator_calibration"
+        )
+        try:
+            self.assertTrue(packaged.protocol_locks_valid)
+            self.assertTrue(compatibility.protocol_locks_valid)
+            self.assertEqual(packaged.release_summary, compatibility.release_summary)
+            self.assertEqual(
+                packaged.certification.as_json(), compatibility.certification.as_json()
+            )
+        finally:
+            packaged.close()
+            compatibility.close()
+
+    def test_packaged_profile_does_not_require_checkout_holdout_schema(self) -> None:
+        project_root = Path(harness_package.__file__).resolve().parent.parent
+        with tempfile.TemporaryDirectory() as temporary:
+            suite_root = Path(temporary)
+            suite_manifest = suite_root / "external-suite.json"
+            shutil.copy2(project_root / "suite.json", suite_manifest)
+            shutil.copy2(
+                project_root / "baseline-authority.json",
+                suite_root / "baseline-authority.json",
+            )
+            runtime = ComparatorRuntime.load_builtin_profile(
+                BUILTIN_SOFTWARE_PROFILE_ID,
+                external_suite_root=suite_root,
+                external_suite_manifest=suite_manifest,
+                use_test_release=True,
+            )
+            try:
+                self.assertTrue(runtime.protocol_locks_valid)
+                self.assertFalse((suite_root / "holdout-plan.schema.json").exists())
+            finally:
+                runtime.close()
+
     def test_resolution_snapshot_is_stable_after_package_drift(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = self.copied_profile_root(Path(temporary))

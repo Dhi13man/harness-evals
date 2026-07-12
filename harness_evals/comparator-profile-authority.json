@@ -4,8 +4,8 @@
     {
       "id": "software-engineering-v2.3",
       "descriptor_sha256": "7a0623b3da29e9eb1f15b94020b079fb9e61454023ea29660d58eb40acc10941",
-      "production_release_sha256": "117218e048e138c3f10b50de29db97d5bd6da52e794a9d98753975ae64c95191",
-      "test_release_sha256": "41521ac5e77b088d57b8e9977c6e79e37e81d0c8f75e943ccb5bdc7b8d2495b2",
+      "production_release_sha256": "3a34aca649f5d299d0aff1971358501216a023d287cf2210ea9a0f2ba83011f5",
+      "test_release_sha256": "2e271d29f6e89773540022446af809dd82561fae9dd80af81e0395fd65a554c6",
       "certification_contract_sha256": "bbd14f10b83d4407c1a34cf066843bc71d10ab08f9ef1f5a178dde5d4ae08b1f",
       "requires_live_certification": true
     }

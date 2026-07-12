@@ -1274,7 +1274,10 @@ def criterion_support(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 def _validate_release(
-    bundle: Bundle, *, validate_external_bindings: bool = True
+    bundle: Bundle,
+    *,
+    validate_external_bindings: bool = True,
+    evaluator_root: Path | None = None,
 ) -> dict[str, Any]:
     """Verify the trusted release lock against current canonical artifacts."""
 
@@ -1379,11 +1382,18 @@ def _validate_release(
     )
     if evaluator["version"] != EVALUATOR_VERSION:
         raise CalibrationError("release evaluator version is stale")
-    if evaluator["source_sha256"] != file_sha256(bundle.root / "calibration.py"):
+    evaluator_source_root = bundle.root if evaluator_root is None else evaluator_root
+    if evaluator["source_sha256"] != file_sha256(
+        evaluator_source_root / "calibration.py"
+    ):
         raise CalibrationError("release evaluator source hash is stale")
-    if evaluator["collector_source_sha256"] != file_sha256(bundle.root / "collect.py"):
+    if evaluator["collector_source_sha256"] != file_sha256(
+        evaluator_source_root / "collect.py"
+    ):
         raise CalibrationError("release collector source hash is stale")
-    if evaluator["certifier_source_sha256"] != file_sha256(bundle.root / "certify.py"):
+    if evaluator["certifier_source_sha256"] != file_sha256(
+        evaluator_source_root / "certify.py"
+    ):
         raise CalibrationError("release certifier source hash is stale")
     judge = _exact(
         release["judge"],
@@ -1627,10 +1637,54 @@ def validate_release(bundle: Bundle) -> dict[str, Any]:
     return _validate_release(bundle, validate_external_bindings=True)
 
 
-def validate_profile_release(bundle: Bundle) -> dict[str, Any]:
+def validate_profile_release(
+    bundle: Bundle, *, evaluator_root: Path | None = None
+) -> dict[str, Any]:
     """Validate an authority-bound profile while marking external inputs unchecked."""
 
-    return _validate_release(bundle, validate_external_bindings=False)
+    return _validate_release(
+        bundle,
+        validate_external_bindings=False,
+        evaluator_root=evaluator_root,
+    )
+
+
+def validate_packaged_release_bindings(
+    bundle: Bundle,
+    *,
+    suite_root: Path,
+    suite_manifest_path: Path,
+    runtime_source_root: Path,
+) -> None:
+    """Bind packaged profile bytes to one suite and installed runtime source tree."""
+
+    release = bundle.release
+    runtime_adapter = release["runtime_adapter"]
+    authority_path = suite_root / "baseline-authority.json"
+    authority_commit = require_baseline_authority(
+        suite_manifest_path,
+        authority_path,
+    )
+    if runtime_adapter["frozen_original_commit"] != authority_commit:
+        raise CalibrationError(
+            "release frozen original commit differs from baseline authority"
+        )
+    runtime_sources = {
+        "source_sha256": runtime_source_root / "comparator_runtime.py",
+        "harness_runner_source_sha256": runtime_source_root / "runner.py",
+        "provider_source_sha256": runtime_source_root / "providers.py",
+        "profile_registry_source_sha256": runtime_source_root
+        / "comparator_profiles.py",
+        "harness_manifest_source_sha256": runtime_source_root / "manifest.py",
+        "harness_package_source_sha256": runtime_source_root / "__init__.py",
+        "run_evals_source_sha256": runtime_source_root / "cli.py",
+        "holdout_plan_source_sha256": runtime_source_root / "holdout_plan.py",
+        "prepare_holdout_plan_source_sha256": runtime_source_root / "holdout_cli.py",
+        "baseline_authority_source_sha256": authority_path,
+    }
+    for field, source_path in runtime_sources.items():
+        if runtime_adapter[field] != file_sha256(source_path):
+            raise CalibrationError(f"release {field} source hash is stale")
 
 
 def invocation_id(
@@ -2222,10 +2276,26 @@ def expected_trial_keys(manifest: dict[str, Any]) -> set[tuple[str, int, str]]:
     }
 
 
-def evaluate_evidence(bundle: Bundle, evidence: dict[str, Any]) -> dict[str, Any]:
+def evaluate_evidence(
+    bundle: Bundle,
+    evidence: dict[str, Any],
+    *,
+    profile_only: bool = False,
+    evaluator_root: Path | None = None,
+    external_bindings_validated: bool | None = None,
+) -> dict[str, Any]:
     """Evaluate complete offline calls; live invocation is deliberately out of scope."""
 
-    release_summary = validate_release(bundle)
+    release_summary = (
+        validate_profile_release(bundle, evaluator_root=evaluator_root)
+        if profile_only
+        else validate_release(bundle)
+    )
+    if external_bindings_validated is not None:
+        release_summary = {
+            **release_summary,
+            "external_bindings_validated": external_bindings_validated,
+        }
     manifest_summary = validate_manifest(bundle.manifest, bundle.rubric)
     _exact(
         evidence,

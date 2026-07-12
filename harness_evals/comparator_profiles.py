@@ -25,11 +25,9 @@ MAX_PROFILE_ID_LENGTH = 128
 MAX_RESOURCE_PATH_BYTES = 255
 _PROFILE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9.-]*$")
 _PROFILE_VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
-_RESOURCE_KEYS = frozenset(
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_DATA_RESOURCE_KEYS = frozenset(
     {
-        "calibration_engine",
-        "collector",
-        "certifier",
         "manifest",
         "manifest_schema",
         "rubric",
@@ -40,6 +38,11 @@ _RESOURCE_KEYS = frozenset(
         "test_release",
     }
 )
+_BUILTIN_RESOURCE_KEYS = _DATA_RESOURCE_KEYS | {
+    "calibration_engine",
+    "collector",
+    "certifier",
+}
 _BUILTIN_PROFILE_PACKAGES: Mapping[str, Any] = MappingProxyType(
     {BUILTIN_SOFTWARE_PROFILE_ID: comparator_calibration}
 )
@@ -90,12 +93,12 @@ class ComparatorProfileAuthorityBinding:
 
 @dataclass(frozen=True)
 class ComparatorProfileResources:
-    """One immutable snapshot of validated package resources."""
+    """One immutable snapshot of validated profile resources."""
 
     descriptor: ComparatorProfileDescriptor
     descriptor_bytes: bytes
     resource_snapshot: tuple[tuple[str, str, bytes], ...]
-    authority_binding: ComparatorProfileAuthorityBinding
+    authority_binding: ComparatorProfileAuthorityBinding | None
 
     def read_bytes(self, resource_name: str) -> bytes:
         for name, _relative, raw_bytes in self.resource_snapshot:
@@ -167,7 +170,9 @@ def _paths_collide(left: str, right: str) -> bool:
     return left_parts[:shared] == right_parts[:shared]
 
 
-def parse_profile_descriptor(raw_bytes: bytes) -> ComparatorProfileDescriptor:
+def parse_profile_descriptor(
+    raw_bytes: bytes, *, data_only: bool = False
+) -> ComparatorProfileDescriptor:
     """Parse bounded exact descriptor bytes without accepting ambiguous JSON."""
 
     if not isinstance(raw_bytes, bytes):
@@ -209,7 +214,13 @@ def parse_profile_descriptor(raw_bytes: bytes) -> ComparatorProfileDescriptor:
     ):
         raise ComparatorProfileError("profile engine contract is invalid")
     resource_map = value["resources"]
-    if not isinstance(resource_map, dict) or set(resource_map) != _RESOURCE_KEYS:
+    expected_resource_keys = (
+        _DATA_RESOURCE_KEYS if data_only else _BUILTIN_RESOURCE_KEYS
+    )
+    if (
+        not isinstance(resource_map, dict)
+        or set(resource_map) != expected_resource_keys
+    ):
         raise ComparatorProfileError("profile resource fields are invalid")
     parsed_resources = tuple(
         (name, _canonical_resource_path(resource_map[name], f"resources.{name}"))
@@ -444,9 +455,9 @@ def _review_hashes(manifest: dict[str, Any]) -> dict[str, str]:
 def _validate_release_resources(
     descriptor: ComparatorProfileDescriptor,
     snapshot: Mapping[str, bytes],
-    authority: ComparatorProfileAuthorityBinding,
+    authority: ComparatorProfileAuthorityBinding | None,
 ) -> None:
-    if (
+    if authority is not None and (
         hashlib.sha256(snapshot["evidence_schema"]).hexdigest()
         != authority.certification_contract_sha256
     ):
@@ -466,16 +477,28 @@ def _validate_release_resources(
     }
     reviews = _review_hashes(parsed["manifest"])
     release_ids: set[str] = set()
-    for resource_name, expected_test_release, expected_release_sha256 in (
+    release_contracts = (
         (
             "production_release",
             False,
-            authority.production_release_sha256,
+            (authority.production_release_sha256 if authority is not None else None),
         ),
-        ("test_release", True, authority.test_release_sha256),
-    ):
+        (
+            "test_release",
+            True,
+            authority.test_release_sha256 if authority is not None else None,
+        ),
+    )
+    for (
+        resource_name,
+        expected_test_release,
+        expected_release_sha256,
+    ) in release_contracts:
         raw_release = snapshot[resource_name]
-        if hashlib.sha256(raw_release).hexdigest() != expected_release_sha256:
+        if (
+            expected_release_sha256 is not None
+            and hashlib.sha256(raw_release).hexdigest() != expected_release_sha256
+        ):
             raise ComparatorProfileError(
                 f"{resource_name} differs from the authority registry"
             )
@@ -516,10 +539,21 @@ def _validate_release_resources(
             "collector_source_sha256": "collector",
             "certifier_source_sha256": "certifier",
         }
-        if any(
-            evaluator.get(field) != hashlib.sha256(snapshot[name]).hexdigest()
-            for field, name in expected_sources.items()
-        ):
+        evaluator_sources_match = (
+            all(name in snapshot for name in expected_sources.values())
+            and all(
+                evaluator.get(field) == hashlib.sha256(snapshot[name]).hexdigest()
+                for field, name in expected_sources.items()
+            )
+        ) or (
+            all(name not in snapshot for name in expected_sources.values())
+            and all(
+                isinstance(evaluator.get(field), str)
+                and _SHA256_RE.fullmatch(evaluator[field]) is not None
+                for field in expected_sources
+            )
+        )
+        if not evaluator_sources_match:
             raise ComparatorProfileError(
                 f"{resource_name} profile source lock is stale or mismatched"
             )
@@ -575,4 +609,32 @@ def resolve_builtin_profile(profile_id: str) -> ComparatorProfileResources:
         descriptor_bytes=descriptor_bytes,
         resource_snapshot=snapshot,
         authority_binding=authority,
+    )
+
+
+def resolve_profile_directory(root: Path) -> ComparatorProfileResources:
+    """Resolve a contained data-only profile without granting release authority."""
+
+    profile_root = Path(root)
+    descriptor_bytes = _read_resource_bytes(
+        profile_root, "profile.json", MAX_PROFILE_DESCRIPTOR_BYTES
+    )
+    descriptor = parse_profile_descriptor(descriptor_bytes, data_only=True)
+    snapshot = tuple(
+        (
+            name,
+            relative,
+            _read_resource_bytes(profile_root, relative, MAX_PROFILE_RESOURCE_BYTES),
+        )
+        for name, relative in descriptor.resources
+    )
+    snapshot_by_name = MappingProxyType(
+        {name: raw_bytes for name, _relative, raw_bytes in snapshot}
+    )
+    _validate_release_resources(descriptor, snapshot_by_name, None)
+    return ComparatorProfileResources(
+        descriptor=descriptor,
+        descriptor_bytes=descriptor_bytes,
+        resource_snapshot=snapshot,
+        authority_binding=None,
     )
