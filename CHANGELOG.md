@@ -4,6 +4,15 @@ All notable changes to Harness Evals are documented in this file. The format fol
 
 ## [Unreleased]
 
+### Added
+
+- Added schema v4 with explicit per-case bundle source paths and optional contained shared verifier resources.
+- Added installed-wheel coverage for external suites whose bundles, cases, and verifier resources use independent layouts.
+
+### Security
+
+- Added literal Git path handling, bounded source enumeration, Git/worktree snapshot parity, runtime shared-path revalidation, verifier-only source separation, and read-only configured shared mounts.
+
 ## [0.2.0] - 2026-07-12
 
 ### Changed

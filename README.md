@@ -4,7 +4,7 @@
 
 Harness Evals is an open source system for running reproducible A/B evaluations of skills and instruction bundles through agent harnesses. It combines isolated agent execution, objective case-specific verifiers, calibrated blinded pairwise comparison, immutable source bindings, bounded spend accounting, and review-sealed holdout support.
 
-A suite defines its own skill identifiers, tasks, fixtures, verifiers, and comparison arms. The included engineering and testing tracks are the first reference corpus, not the evaluator's domain boundary; suites may target any `skills/<id>/SKILL.md` bundle with cases that exercise its observable behavior. Harness integrations live behind provider adapters.
+A suite defines its own skill identifiers, bundle locations, tasks, fixtures, verifier resources, and comparison arms. The included engineering and testing tracks are the first reference corpus, not the evaluator's domain boundary; suites may target any configured instruction bundle with cases that exercise its observable behavior. Harness integrations live behind provider adapters.
 
 Version `0.2.0` is an alpha release for expert evaluation work on Linux. The public corpus contains train and validation cases, not a private holdout, and the repository does not ship live comparator certification evidence or claim that one harness or bundle is superior. The production-authority blinded comparator is calibrated for software-change evidence. A test-authority plain-language profile proves that non-engineering semantics can use the shared engine, but its corpus is an author-authored fixture rather than independent production calibration. Other domains should use objective case verifiers or contribute a separately calibrated comparator profile rather than reusing either rubric without validation.
 
@@ -82,30 +82,39 @@ The root [suite.json](suite.json) is a complete repository-local reference suite
 
 | Component | Purpose |
 | --- | --- |
-| `evaluation_mode` | Selects comparator-judged or objective-verifier-only evaluation in schema v3. |
+| `evaluation_mode` | Selects comparator-judged or objective-verifier-only evaluation in schema v3 and v4. |
 | `provider` | Generates a change in an isolated fixture workspace. |
 | `comparator` | Judges eligible pairs using the locked blinded protocol. |
-| `comparator_profile` | Selects the versioned comparator contract and resources for schema-v3 judged suites. |
+| `comparator_profile` | Selects the versioned comparator contract and resources for schema-v3 and schema-v4 judged suites. |
+| `shared_verifier_dir` | In schema v4, selects one contained read-only verifier resource directory or explicitly disables shared resources with `null`. |
 | `variants` | Bind absent, immutable Git-ref, or committed-worktree instruction bundles. |
 | `comparisons` | Define control/treatment roles, exactly three repetitions, and AB/BA order. |
-| `cases` | Bind a prompt, fixture, verifier, bundle ID, explicit context, expectations, and, for judged suites, a comparator contract. |
+| `cases` | Bind a prompt, fixture, verifier, bundle ID, schema-v4 `bundle_source`, explicit context, expectations, and, for judged suites, a comparator contract. |
 
 The executable parser in [harness_evals/manifest.py](harness_evals/manifest.py) is authoritative. [suite.schema.json](suite.schema.json) is the editor and interoperability contract; changes must keep both in exact behavioral parity.
 
-To evaluate bundles in another repository, copy the manifest, set `repository_root`, point worktree variants at that repository, replace Git refs with commits reachable there, and update every case's bundle ID and explicit context files. Do not move a baseline by editing only the manifest: `baseline-authority.json`, comparator runtime bindings, and any sealed holdout plan must be regenerated and reviewed together.
+To evaluate bundles in another repository, copy the manifest, set `repository_root`, point worktree variants at that repository, replace Git refs with commits reachable there, and update every case's bundle ID, bundle source, and explicit context files. Suite files and shared verifier resources may use any contained layout; they do not need to mirror the evaluated repository. Do not move a baseline by editing only the manifest: `baseline-authority.json`, comparator runtime bindings, and any sealed holdout plan must be regenerated and reviewed together.
 
 ### Evaluation Modes
 
-Schema v2 remains supported without changing existing manifest bytes, manifest hashes, or result field shapes and selects the current software comparator through its compatibility path. Comparator release and certification hashes still change when their locked code or resources change. Schema v3 requires an explicit `evaluation_mode`.
+Schema v2 remains supported without changing existing manifest bytes, manifest hashes, or result field shapes and selects the current software comparator through its compatibility path. Schema v3 adds an explicit `evaluation_mode`. Both compatibility schemas derive each bundle from `skills/<skill>` and discover `cases/testing/_shared` when that legacy directory exists. Comparator release and certification hashes still change when their locked code or resources change.
 
 - `judged` requires both `comparator` and `comparator_profile`, and every case requires `comparator_contract`.
 - `objective_only` forbids `comparator`, `comparator_profile`, and every case-level `comparator_contract`. The runner constructs no comparator provider or runtime, creates no comparator spend ledger, selects the sole verifier-passing arm, and records equal verifier outcomes as `tie` under `verifier-pass-v1`.
 
-Objective-only schema-v3 execution is diagnostic until a later manifest version moves production source authority out of the comparator release. It cannot prepare or consume a holdout plan or authorize a release.
+Objective-only schema-v3 and schema-v4 execution is diagnostic until production source authority moves out of the comparator release. It cannot prepare or consume a holdout plan or authorize a release.
+
+### Layout Paths
+
+Schema v4 requires every case to declare a canonical repository-relative `bundle_source` whose root contains a regular `SKILL.md`. It also requires suite-level `shared_verifier_dir`: use a canonical suite-relative directory for immutable shared verifier resources or `null` when no shared resources exist. Configured shared resources must not overlap prompts, fixtures, evaluated bundles, or explicit context files.
+
+Git-ref and worktree variants use the same bounded source policy. Bundle paths are treated as literal Git paths, special entries and symlink traversal fail closed, configured source bytes must match the pinned commit, and schema-v4 generated caches and untracked empty directories do not alter the evaluated snapshot. Shared resources are snapshotted before dispatch, hash-bound into case and holdout evidence, translated into the private verifier runtime, and mounted read-only. A schema-v4 `null` exposes neither a shared mount nor `EVAL_SHARED_ROOT`.
+
+The installed-wheel smoke builds a schema-v4 suite outside the checkout and site-packages with `instruction-bundles/demo`, `oracle-resources/common`, and `cases/basic`. It binds the exact external worktree commit, bundle fingerprint, shared-tree hash, and verifier path through the installed CLI.
 
 ### Comparator Profiles
 
-A judged schema-v3 suite selects either a registered built-in profile or a contained suite-local data profile:
+A judged schema-v3 or schema-v4 suite selects either a registered built-in profile or a contained suite-local data profile:
 
 ```json
 {
@@ -180,7 +189,7 @@ Every non-dry holdout attempt consumes its plan before any agent or comparator c
 The Python package follows Semantic Versioning. Before `1.0.0`, minor versions may change the Python API or CLI with changelog and migration notes. Manifest schema versions, corpus versions, comparator protocol versions, and release-lock versions are independent compatibility surfaces and are never inferred from the package version.
 
 - Package and CLI: `0.2.0`
-- Suite manifest schemas: `2` compatibility, `3` current
+- Suite manifest schemas: `2` and `3` compatibility, `4` current
 - Included suite: `harness-evals-software-engineering-v1`
 - Comparator evaluator: `2.3.0`
 
