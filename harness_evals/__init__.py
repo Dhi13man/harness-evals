@@ -1,4 +1,4 @@
-"""Reusable A/B evaluation harness for software engineering instructions."""
+"""Reusable A/B evaluation system for agent skills and instruction bundles."""
 
 from .manifest import ManifestError, ProviderConfig, SuiteSpec, load_suite
 from .providers import (
@@ -11,7 +11,7 @@ from .providers import (
 )
 from .runner import EvalRunner, RunSelection, RunnerError
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "ClaudeCliProvider",

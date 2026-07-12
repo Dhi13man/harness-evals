@@ -413,7 +413,16 @@ class SuiteFixture:
 
     def _git(self, *arguments: str) -> str:
         completed = subprocess.run(
-            ["git", "-C", str(self.repository), *arguments],
+            [
+                "git",
+                "-c",
+                "maintenance.auto=false",
+                "-c",
+                "gc.auto=0",
+                "-C",
+                str(self.repository),
+                *arguments,
+            ],
             capture_output=True,
             text=True,
             check=False,
@@ -525,7 +534,9 @@ class SuiteFixture:
     def set_verifier(self, source: str) -> None:
         self._write_suite("verifier.py", source)
 
-    def configure_holdout(self) -> None:
+    def configure_holdout(
+        self, skills: tuple[str, ...] = ("engineering", "testing")
+    ) -> None:
         self.manifest["provider"]["max_budget_usd"] = 1.5
         self.manifest["variants"] = [
             {"id": "no-skill", "kind": "without_skill"},
@@ -559,7 +570,7 @@ class SuiteFixture:
         ]
         base_case = self.manifest["cases"][0]
         cases = []
-        for skill in ("engineering", "testing"):
+        for skill in skills:
             for index in range(8):
                 case = copy.deepcopy(base_case)
                 case_root = f"holdout/{skill}/{index}"
@@ -1964,6 +1975,8 @@ print(json.dumps({"passed": False, "assertions": [{"id": "answer-present", "pass
         self.assertIn("Old skill guidance", observations["old"][0])
         self.assertIn("Old routed rule", observations["old"][1])
         self.assertIn("Old skill guidance", observations["old"][2])
+        self.assertIn("isolated agent-harness evaluation", observations["old"][2])
+        self.assertNotIn("software-engineering evaluation", observations["old"][2])
         self.assertIn("New treatment guidance", observations["current"][0])
         self.assertIn("New routed rule", observations["current"][1])
         pair = result["pairs"][0]
@@ -3695,8 +3708,37 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
             self.suite,
             cases=(replace(self.suite.cases[0], skill="demo"), *self.suite.cases[1:]),
         )
-        with self.assertRaisesRegex(RunnerError, "exactly the engineering"):
+        with self.assertRaisesRegex(RunnerError, "at least 8 cases"):
             self.runner(wrong_skill)._selected(self.selection())
+
+    def test_holdout_release_scope_is_derived_from_selected_skills(self) -> None:
+        self.fixture.configure_holdout(("demo",))
+        self.suite = load_suite(self.fixture.manifest_path)
+        self.payload = self.fixture.holdout_plan_payload()
+        self.plan_path = self.fixture.save_holdout_plan(
+            self.payload, name="demo-holdout-plan.json"
+        )
+        selection = self.selection()
+        runner = self.runner()
+
+        cases, _comparisons = runner._selected(selection)
+        self.assertEqual({case.skill for case in cases}, {"demo"})
+
+        holdout_plan = load_holdout_plan(self.plan_path)
+        aggregate = _aggregate(
+            self.release_pairs(),  # type: ignore[arg-type]
+            self.suite,
+            self.suite.comparisons,
+            selection,
+            holdout_plan=holdout_plan,
+            release_authority_validated=True,
+            generator_release_authoritative=True,
+        )
+        self.assertEqual(
+            set(aggregate["by_comparison_skill"]["candidate-vs-original"]),
+            {"demo"},
+        )
+        self.assertTrue(aggregate["final_release_authorized"])
 
     def test_holdout_preflight_rejects_release_baseline_mismatch_and_same_candidate(
         self,

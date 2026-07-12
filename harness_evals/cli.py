@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run isolated, blinded software engineering and testing A/B evaluations."""
+"""Run isolated, blinded A/B evaluations of skills and instruction bundles."""
 
 from __future__ import annotations
 
