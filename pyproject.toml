@@ -26,6 +26,9 @@ classifiers = [
 ]
 dependencies = []
 
+[project.optional-dependencies]
+test = ["jsonschema==4.25.1"]
+
 [project.urls]
 Homepage = "https://github.com/Dhi13man/harness-evals"
 Repository = "https://github.com/Dhi13man/harness-evals"
