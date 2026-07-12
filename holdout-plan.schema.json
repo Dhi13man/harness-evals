@@ -18,6 +18,18 @@
       "pattern": "^[0-9a-f]{64}$",
       "type": "string"
     },
+    "comparator_profile_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "comparator_profile_descriptor_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "comparator_profile_authority_registry_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
     "candidate_commit": {
       "pattern": "^[0-9a-f]{40}$",
       "type": "string"
@@ -350,6 +362,20 @@
       "pattern": "^[0-9a-f]{64}$",
       "type": "string"
     },
+    "evaluation_mode": {
+      "enum": [
+        "judged",
+        "objective_only"
+      ]
+    },
+    "objective_acceptance_policy_id": {
+      "pattern": "^[a-z0-9][a-z0-9._-]*$",
+      "type": "string"
+    },
+    "objective_acceptance_policy_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
     "original_commit": {
       "pattern": "^[0-9a-f]{40}$",
       "type": "string"
@@ -503,8 +529,6 @@
     "plan_id",
     "status",
     "manifest_sha256",
-    "comparator_release_sha256",
-    "comparator_calibration_evidence_sha256",
     "generator_provider",
     "consumption_record_path",
     "seed",
@@ -515,8 +539,42 @@
   "oneOf": [
     {
       "not": {
-        "required": [
-          "source_bindings"
+        "anyOf": [
+          {
+            "required": [
+              "source_bindings"
+            ]
+          },
+          {
+            "required": [
+              "evaluation_mode"
+            ]
+          },
+          {
+            "required": [
+              "comparator_profile_id"
+            ]
+          },
+          {
+            "required": [
+              "comparator_profile_descriptor_sha256"
+            ]
+          },
+          {
+            "required": [
+              "comparator_profile_authority_registry_sha256"
+            ]
+          },
+          {
+            "required": [
+              "objective_acceptance_policy_id"
+            ]
+          },
+          {
+            "required": [
+              "objective_acceptance_policy_sha256"
+            ]
+          }
         ]
       },
       "properties": {
@@ -526,7 +584,9 @@
       },
       "required": [
         "candidate_commit",
-        "original_commit"
+        "original_commit",
+        "comparator_release_sha256",
+        "comparator_calibration_evidence_sha256"
       ]
     },
     {
@@ -541,16 +601,90 @@
             "required": [
               "original_commit"
             ]
+          },
+          {
+            "required": [
+              "objective_acceptance_policy_id"
+            ]
+          },
+          {
+            "required": [
+              "objective_acceptance_policy_sha256"
+            ]
           }
         ]
       },
       "properties": {
+        "evaluation_mode": {
+          "const": "judged"
+        },
         "schema_version": {
           "const": 3
         }
       },
       "required": [
-        "source_bindings"
+        "source_bindings",
+        "evaluation_mode",
+        "comparator_release_sha256",
+        "comparator_calibration_evidence_sha256",
+        "comparator_profile_id",
+        "comparator_profile_descriptor_sha256",
+        "comparator_profile_authority_registry_sha256"
+      ]
+    },
+    {
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "candidate_commit"
+            ]
+          },
+          {
+            "required": [
+              "original_commit"
+            ]
+          },
+          {
+            "required": [
+              "comparator_release_sha256"
+            ]
+          },
+          {
+            "required": [
+              "comparator_calibration_evidence_sha256"
+            ]
+          },
+          {
+            "required": [
+              "comparator_profile_id"
+            ]
+          },
+          {
+            "required": [
+              "comparator_profile_descriptor_sha256"
+            ]
+          },
+          {
+            "required": [
+              "comparator_profile_authority_registry_sha256"
+            ]
+          }
+        ]
+      },
+      "properties": {
+        "evaluation_mode": {
+          "const": "objective_only"
+        },
+        "schema_version": {
+          "const": 3
+        }
+      },
+      "required": [
+        "source_bindings",
+        "evaluation_mode",
+        "objective_acceptance_policy_id",
+        "objective_acceptance_policy_sha256"
       ]
     }
   ],

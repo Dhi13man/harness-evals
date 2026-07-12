@@ -5236,8 +5236,6 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
     def test_schema_v5_prepares_generic_source_bindings_without_reserved_ids(
         self,
     ) -> None:
-        legacy_runner = self.production_runner(self.runner(production=False))
-        comparator_runtime = legacy_runner._load_comparator_runtime()
         external_worktree = self.fixture.root / "external-treatment"
         subprocess.run(
             [
@@ -5323,9 +5321,7 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
             case["bundle_source"] = f"skills/{case['skill']}"
         self.fixture.save_manifest()
         suite = load_suite(self.fixture.manifest_path)
-        runner = self.runner(suite, production=False)
-        runner._comparator_runtime = comparator_runtime
-        runner = self.production_runner(runner)
+        runner = self.production_runner(self.runner(suite, production=False))
         output = self.fixture.root / "generic-source-plan.json"
 
         result = runner.prepare_holdout_plan(
@@ -5369,6 +5365,83 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
                 bindings["reference"]["source_sha256_by_case"][case.id],
                 bindings["treatment"]["source_sha256_by_case"][case.id],
             )
+
+    def test_schema_v5_objective_holdout_seals_policy_without_comparator(self) -> None:
+        self.fixture.manifest["schema_version"] = 5
+        self.fixture.manifest["evaluation_mode"] = "objective_only"
+        self.fixture.manifest.pop("comparator")
+        self.fixture.manifest.pop("comparator_profile", None)
+        self.fixture.manifest["shared_verifier_dir"] = None
+        self.fixture.manifest["holdout"] = {"comparison_ids": list(self.comparison_ids)}
+        self.fixture.manifest["cases"] = [
+            case
+            for case in self.fixture.manifest["cases"]
+            if case["skill"] == "engineering"
+        ]
+        for case in self.fixture.manifest["cases"]:
+            case["bundle_source"] = "skills/engineering"
+            case.pop("comparator_contract")
+        self.fixture.save_manifest()
+        suite = load_suite(self.fixture.manifest_path)
+        runner = EvalRunner(suite)
+        self.addCleanup(runner.close)
+
+        def treatment_only(request):
+            if request.variant_id == "candidate":
+                (request.workspace / "answer.txt").write_text(
+                    "accepted treatment", encoding="utf-8"
+                )
+            return "objective result"
+
+        runner.agent_provider._agent_handler = treatment_only
+        output = self.fixture.root / "objective-holdout-plan.json"
+        result_dir = self.fixture.root / "objective-holdout-result"
+        with (
+            patch.object(
+                runner, "_assert_generator_release_authority", return_value=None
+            ),
+            patch.object(
+                runner,
+                "_production_generator_release_authoritative",
+                return_value=True,
+            ),
+        ):
+            prepared = runner.prepare_holdout_plan(
+                output_path=output,
+                plan_id="objective-holdout-v1",
+                reviewers=("reviewer-a",),
+                freeze_record="review:freeze:objective-holdout-v1",
+                seal_record="review:seal:objective-holdout-v1",
+            )
+            result = runner.run(
+                RunSelection(
+                    split="holdout",
+                    comparison_ids=self.comparison_ids,
+                    holdout_plan=output,
+                ),
+                output_dir=result_dir,
+            )
+
+        plan = load_holdout_plan(output)
+        self.assertEqual(plan.evaluation_mode, "objective_only")
+        self.assertIsNone(plan.comparator_release_sha256)
+        self.assertEqual(
+            plan.objective_acceptance_policy_id,
+            runner_module._OBJECTIVE_ACCEPTANCE_POLICY["policy_id"],
+        )
+        self.assertEqual(
+            plan.objective_acceptance_policy_sha256,
+            runner_module._OBJECTIVE_ACCEPTANCE_POLICY_SHA256,
+        )
+        self.assertIsNone(prepared["preflight"]["comparator"])
+        self.assertNotIn(
+            "comparator_release_sha256", prepared["preflight"]["holdout_plan"]
+        )
+        self.assertTrue(result["aggregate"]["final_release_authorized"])
+        self.assertTrue(result["passed"])
+        self.assertNotIn(
+            "comparator-spend", {path.name for path in result_dir.iterdir()}
+        )
 
     def test_holdout_consumption_is_one_shot_across_roots_copies_and_crashes(
         self,
@@ -7151,8 +7224,9 @@ class CheckedInSuiteTests(unittest.TestCase):
         )
         self.assertFalse(schema["additionalProperties"])
         self.assertEqual(schema["properties"]["schema_version"]["enum"], [2, 3])
-        self.assertEqual(len(schema["oneOf"]), 2)
+        self.assertEqual(len(schema["oneOf"]), 3)
         self.assertIn("source_bindings", schema["properties"])
+        self.assertIn("evaluation_mode", schema["properties"])
         provenance = schema["properties"]["provenance"]
         self.assertEqual(
             provenance["properties"]["assurance"]["const"],
@@ -7162,8 +7236,8 @@ class CheckedInSuiteTests(unittest.TestCase):
             provenance["properties"]["privacy_claim"]["const"],
             "not-a-cryptographic-privacy-proof",
         )
-        self.assertIn("comparator_release_sha256", schema["required"])
-        self.assertIn("comparator_calibration_evidence_sha256", schema["required"])
+        self.assertNotIn("comparator_release_sha256", schema["required"])
+        self.assertNotIn("comparator_calibration_evidence_sha256", schema["required"])
         self.assertIn("generator_provider", schema["required"])
         self.assertIn("consumption_record_path", schema["required"])
         self.assertIn(

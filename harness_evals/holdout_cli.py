@@ -67,11 +67,8 @@ def main(argv: list[str] | None = None) -> int:
     summary = {
         "binding_verified": result["binding_verified"],
         "case_count": result["case_count"],
-        "comparator_calibration_evidence_sha256": proof["holdout_plan"][
-            "comparator_calibration_evidence_sha256"
-        ],
-        "comparator_release_sha256": proof["holdout_plan"]["comparator_release_sha256"],
         "consumption_record_path": proof["holdout_plan"]["consumption_record_path"],
+        "evaluation_mode": proof["holdout_plan"]["evaluation_mode"],
         "execution_plan": result["execution_plan"],
         "file_mode": result["file_mode"],
         "generator_provider": proof["holdout_plan"]["generator_provider"],
@@ -80,6 +77,20 @@ def main(argv: list[str] | None = None) -> int:
         "plan_sha256": result["plan_sha256"],
         "source_bindings": proof["holdout_plan"]["source_bindings"],
     }
+    if summary["evaluation_mode"] == "judged":
+        summary["comparator_calibration_evidence_sha256"] = proof["holdout_plan"][
+            "comparator_calibration_evidence_sha256"
+        ]
+        summary["comparator_release_sha256"] = proof["holdout_plan"][
+            "comparator_release_sha256"
+        ]
+    else:
+        summary["objective_acceptance_policy_id"] = proof["holdout_plan"][
+            "objective_acceptance_policy_id"
+        ]
+        summary["objective_acceptance_policy_sha256"] = proof["holdout_plan"][
+            "objective_acceptance_policy_sha256"
+        ]
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
 

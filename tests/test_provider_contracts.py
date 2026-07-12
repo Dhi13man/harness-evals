@@ -935,6 +935,11 @@ class HoldoutProviderContractTests(unittest.TestCase):
         payload["schema_version"] = 3
         payload.pop("candidate_commit")
         payload.pop("original_commit")
+        payload["evaluation_mode"] = "judged"
+        payload["comparator_calibration_evidence_sha256"] = "3" * 64
+        payload["comparator_profile_id"] = "software-engineering-v2.3"
+        payload["comparator_profile_descriptor_sha256"] = "4" * 64
+        payload["comparator_profile_authority_registry_sha256"] = "5" * 64
         case_ids = sorted(case["id"] for case in payload["cases"])
         payload["source_bindings"] = [
             {
@@ -952,6 +957,7 @@ class HoldoutProviderContractTests(unittest.TestCase):
         self.save(payload)
         plan = load_holdout_plan(self.path)
         self.assertEqual(plan.schema_version, 3)
+        self.assertEqual(plan.evaluation_mode, "judged")
         self.assertEqual(
             tuple(binding.variant_id for binding in plan.source_bindings),
             ("candidate", "original"),
@@ -980,6 +986,34 @@ class HoldoutProviderContractTests(unittest.TestCase):
                         load_holdout_plan(self.path)
                 else:
                     self.assert_schema_and_parser_reject(invalid)
+
+        objective = copy.deepcopy(payload)
+        objective["evaluation_mode"] = "objective_only"
+        for field in (
+            "comparator_release_sha256",
+            "comparator_calibration_evidence_sha256",
+            "comparator_profile_id",
+            "comparator_profile_descriptor_sha256",
+            "comparator_profile_authority_registry_sha256",
+        ):
+            objective.pop(field)
+        objective["objective_acceptance_policy_id"] = "verifier-pass-v1"
+        objective["objective_acceptance_policy_sha256"] = "6" * 64
+        self.assertFalse(list(Draft202012Validator(self.schema).iter_errors(objective)))
+        self.save(objective)
+        objective_plan = load_holdout_plan(self.path)
+        self.assertEqual(objective_plan.evaluation_mode, "objective_only")
+        self.assertIsNone(objective_plan.comparator_release_sha256)
+
+        objective_with_comparator = copy.deepcopy(objective)
+        objective_with_comparator["comparator_release_sha256"] = "7" * 64
+        self.assert_schema_and_parser_reject(objective_with_comparator)
+        judged_with_objective = copy.deepcopy(payload)
+        judged_with_objective["objective_acceptance_policy_id"] = "verifier-pass-v1"
+        self.assert_schema_and_parser_reject(judged_with_objective)
+        objective_without_policy = copy.deepcopy(objective)
+        objective_without_policy.pop("objective_acceptance_policy_sha256")
+        self.assert_schema_and_parser_reject(objective_without_policy)
 
     def test_holdout_parser_and_schema_reject_billing_policy_mutations(self) -> None:
         mutations: list[dict[str, object]] = []
