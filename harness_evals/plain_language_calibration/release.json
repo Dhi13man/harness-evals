@@ -22,7 +22,7 @@
   },
   "evaluator": {
     "version": "2.3.0",
-    "source_sha256": "086f0c4794729d3d562041edad1529f49ce823978a12b07089c2273d266c476b",
+    "source_sha256": "e3eacadc2f2a79a5fbf6e7ab09d06069ccced5a94ef3bf8a27b49ba48cc61e2b",
     "collector_source_sha256": "c601c330d7309090d980609a21d97a98ba49bcaa34831619eff14fc8dc3da8e4",
     "certifier_source_sha256": "5149f0ecb4a8e0588758cf98325c98b6060979a27fec6aeb95dcb22a07f52746"
   },
@@ -161,6 +161,7 @@
     "id": "shared-harness-claude-cli-v1",
     "source_sha256": "853ef2116c5fa97c6605850728ca59732d40e8b5c1fa308e4ea4dc2cc6a11178",
     "harness_runner_source_sha256": "f25cdfb215977651758ca10d63507c0b4b86240c4a336f0b7db02b1e183fe990",
+    "artifact_normalizer_source_sha256": "073b7fff7b8b957fd0752128915f0b0afc7120a9d8a5993e7ca90117c9fcb1d6",
     "provider_source_sha256": "683ad36931344528f58d86497fdb44c70848af05de2b97a11a7195d74173306f",
     "profile_registry_source_sha256": "a1fb55b8ac27c8715feeeeac8f0df61f8d789514c4c12faf9508a25dfe466d26",
     "provider_capability_registry_source_sha256": "d0c09ed8df6b8ab2704045e71f7d7719c4d3639e028d156f7a6e58783661a3a5",

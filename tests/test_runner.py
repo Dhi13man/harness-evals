@@ -317,6 +317,7 @@ class SuiteFixture:
         runtime_sources = {
             "source_sha256": "harness_evals/comparator_runtime.py",
             "harness_runner_source_sha256": "harness_evals/runner.py",
+            "artifact_normalizer_source_sha256": "harness_evals/artifacts.py",
             "provider_source_sha256": "harness_evals/providers.py",
             "harness_manifest_source_sha256": "harness_evals/manifest.py",
             "harness_package_source_sha256": "harness_evals/__init__.py",
@@ -2965,6 +2966,76 @@ print(json.dumps({
             self.assertEqual(arm["error_stage"], "artifact_normalization")
             self.assertIn("duplicate key", arm["error"])
             self.assertIsNone(arm["artifact"])
+
+    def test_final_json_artifact_runs_end_to_end_without_a_comparator(self) -> None:
+        self.fixture.use_v7_objective("final_output_json")
+        self.fixture.set_verifier(
+            """import hashlib
+import json
+import os
+from pathlib import Path
+
+artifact = Path(os.environ["EVAL_ARTIFACT_PATH"])
+workspace = Path(os.environ["EVAL_WORKSPACE"])
+content = artifact.read_bytes()
+try:
+    artifact.write_text("mutated", encoding="utf-8")
+    artifact_read_only = False
+except OSError:
+    artifact_read_only = True
+try:
+    (workspace / "verifier-created.txt").write_text("mutated", encoding="utf-8")
+    workspace_read_only = False
+except OSError:
+    workspace_read_only = True
+passed = (
+    content == b'{"a":1,"b":2}'
+    and os.environ["EVAL_ARTIFACT_KIND"] == "final_output_json"
+    and os.environ["EVAL_ARTIFACT_SHA256"] == hashlib.sha256(content).hexdigest()
+    and (workspace / "input.txt").read_text(encoding="utf-8") == "original\\n"
+    and not (workspace / "poison.txt").exists()
+    and artifact_read_only
+    and workspace_read_only
+)
+print(json.dumps({
+    "passed": passed,
+    "assertions": [{
+        "id": "answer-present",
+        "passed": passed,
+        "evidence": "canonical JSON and pristine fixture were mounted read-only",
+    }],
+    "metrics": {},
+}))
+"""
+        )
+        self.fixture.save_manifest()
+
+        def json_output(request):
+            (request.workspace / "input.txt").write_text("candidate mutation\n")
+            (request.workspace / "poison.txt").write_text("candidate-only\n")
+            return '{"b":2, "a":1.0}'
+
+        provider = FakeProvider(agent_handler=json_output)
+        result = EvalRunner(self.load(), provider).run(
+            RunSelection(comparison_ids=("without-current",)),
+            output_dir=self.output("final-json-artifact"),
+        )
+
+        self.assertTrue(result["passed"], result)
+        self.assertEqual(provider.comparator_requests, [])
+        self.assertEqual(result["pairs"][0]["winner_basis"], "verifier-pass-v1")
+        for arm in result["pairs"][0]["arms"].values():
+            self.assertEqual(arm["status"], "completed")
+            self.assertEqual(arm["artifact"]["kind"], "final_output_json")
+            self.assertEqual(arm["artifact"]["filename"], "artifact.json")
+            self.assertEqual(arm["artifact"]["canonicalization"], "rfc8785")
+            self.assertEqual(
+                arm["artifact"]["sha256"],
+                "43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777",
+            )
+            self.assertTrue(arm["verifier"]["artifact"]["read_only"])
+            self.assertTrue(arm["verifier"]["sandbox"]["workspace_read_only"])
+            self.assertFalse(arm["verifier"]["workspace_mutated"])
 
     def test_judged_final_output_requires_a_calibrated_profile(self) -> None:
         self.fixture.use_v7_judged("final_output_text")

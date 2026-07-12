@@ -79,6 +79,8 @@ def _release(*, test: bool) -> dict[str, Any]:
     runtime_sources = {
         "source_sha256": PROJECT_ROOT / "harness_evals/comparator_runtime.py",
         "harness_runner_source_sha256": PROJECT_ROOT / "harness_evals/runner.py",
+        "artifact_normalizer_source_sha256": PROJECT_ROOT
+        / "harness_evals/artifacts.py",
         "provider_source_sha256": PROJECT_ROOT / "harness_evals/providers.py",
         "profile_registry_source_sha256": PROJECT_ROOT
         / "harness_evals/comparator_profiles.py",
