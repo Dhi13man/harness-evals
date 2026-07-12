@@ -1844,7 +1844,7 @@ class EvalRunner:
                 "planned_pair_runs": sum(
                     comparison.repetitions * len(cases) for comparison in comparisons
                 ),
-                "protocol_locks_valid": True,
+                "protocol_locks_valid": preflight["comparator"]["protocol_locks_valid"],
                 "live_calibration_valid": self._load_comparator_runtime().live_calibration_valid,
             }
         if not selection.verifier_only:
@@ -1922,7 +1922,8 @@ class EvalRunner:
                 selection,
                 holdout_plan=self._holdout_plan,
                 release_authority_validated=(
-                    not runtime.bundle.release["test_release"]
+                    runtime.protocol_locks_valid
+                    and not runtime.bundle.release["test_release"]
                     and runtime.certification.valid
                     and runtime.certification.evidence_sha256 is not None
                 ),
@@ -2515,7 +2516,9 @@ class EvalRunner:
             )
         evidence_sha256 = runtime.certification.evidence_sha256
         if not runtime.bundle.release["test_release"] and (
-            not runtime.certification.valid or evidence_sha256 is None
+            not runtime.protocol_locks_valid
+            or not runtime.certification.valid
+            or evidence_sha256 is None
         ):
             raise RunnerError(
                 "production holdout requires valid live comparator certification evidence"
@@ -2589,7 +2592,8 @@ class EvalRunner:
             and runtime.certification.evidence_sha256 is None
         )
         evidence["production_release_authority_eligible"] = bool(
-            not runtime.bundle.release["test_release"]
+            runtime.protocol_locks_valid
+            and not runtime.bundle.release["test_release"]
             and runtime.certification.valid
             and runtime.certification.evidence_sha256 is not None
             and self._production_generator_release_authoritative()

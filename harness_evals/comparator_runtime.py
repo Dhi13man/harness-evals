@@ -17,9 +17,12 @@ import tempfile
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from contextlib import ExitStack
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
+
+from harness_evals.comparator_profiles import resolve_builtin_profile
 
 
 SUITE_ROOT = Path(__file__).resolve().parent
@@ -60,6 +63,7 @@ load_json = _calibration.load_json
 parse_raw_provider_response = _calibration.parse_raw_provider_response
 validate_manifest = _calibration.validate_manifest
 validate_release = _calibration.validate_release
+validate_profile_release = _calibration.validate_profile_release
 validate_executor_evidence = _calibration.validate_executor_evidence
 validate_response = _calibration.validate_response
 
@@ -1086,6 +1090,11 @@ class ComparatorRuntime:
     bundle: Bundle
     release_summary: dict[str, Any]
     certification: RuntimeCertification
+    profile_id: str | None = None
+    profile_descriptor_sha256: str | None = None
+    profile_authority_registry_sha256: str | None = None
+    external_bindings_validated: bool = True
+    _profile_context: Any = field(default=None, repr=False, compare=False)
 
     @classmethod
     def load(
@@ -1117,8 +1126,100 @@ class ComparatorRuntime:
         )
         return cls(resolved, bundle, summary, certification)
 
+    @classmethod
+    def load_builtin_profile(
+        cls,
+        profile_id: str,
+        *,
+        use_test_release: bool = False,
+        certification_name: str = "evidence/certification.json",
+    ) -> "ComparatorRuntime":
+        """Resolve and load one code-owned profile into a private snapshot."""
+
+        profile = resolve_builtin_profile(profile_id)
+        profile_context = ExitStack()
+        try:
+            resolved = profile_context.enter_context(profile.materialize()).resolve(
+                strict=True
+            )
+            release_resource = (
+                "test_release" if use_test_release else "production_release"
+            )
+            parsed_resources = {
+                name: _calibration.parse_json_object(
+                    profile.read_bytes(name).decode("utf-8"),
+                    f"profile {profile_id} resource {name}",
+                )
+                for name in (
+                    "manifest",
+                    "manifest_schema",
+                    "rubric",
+                    "request_template",
+                    "response_schema",
+                    "evidence_schema",
+                    release_resource,
+                )
+            }
+            bundle = Bundle(
+                root=resolved,
+                manifest=parsed_resources["manifest"],
+                manifest_schema=parsed_resources["manifest_schema"],
+                rubric=parsed_resources["rubric"],
+                request_template=parsed_resources["request_template"],
+                response_schema=parsed_resources["response_schema"],
+                evidence_schema=parsed_resources["evidence_schema"],
+                release=parsed_resources[release_resource],
+            )
+            if bundle.release.get("test_release") is True and not use_test_release:
+                raise CalibrationError(
+                    "test release requires explicit use_test_release=True"
+                )
+            _calibration.validate_manifest(bundle.manifest, bundle.rubric)
+            summary = _calibration.validate_profile_release(bundle)
+            adapter = summary["runtime_adapter"]
+            if adapter["id"] != RUNTIME_ADAPTER_ID:
+                raise CalibrationError(
+                    "release does not pin the shared runtime adapter"
+                )
+            if not adapter["shared_harness_compatible"]:
+                raise CalibrationError(
+                    "release is incompatible with the shared harness"
+                )
+            certification = _load_certification(
+                bundle,
+                resolved,
+                certification_name,
+                allow_missing=bundle.release["test_release"],
+            )
+            return cls(
+                resolved,
+                bundle,
+                summary,
+                certification,
+                profile_id=profile.descriptor.id,
+                profile_descriptor_sha256=profile.descriptor.descriptor_sha256,
+                profile_authority_registry_sha256=(
+                    profile.authority_binding.registry_sha256
+                ),
+                external_bindings_validated=False,
+                _profile_context=profile_context,
+            )
+        except BaseException:
+            profile_context.close()
+            raise
+
+    def close(self) -> None:
+        """Release any private profile snapshot owned by this runtime."""
+
+        if self._profile_context is not None:
+            self._profile_context.close()
+
     @property
     def protocol_locks_valid(self) -> bool:
+        return self.external_bindings_validated
+
+    @property
+    def profile_locks_valid(self) -> bool:
         return True
 
     @property
@@ -1126,6 +1227,10 @@ class ComparatorRuntime:
         return self.certification.valid
 
     def require_live_calibration(self) -> None:
+        if not self.external_bindings_validated:
+            raise CalibrationError(
+                "comparator runtime external release bindings are not validated"
+            )
         if self.bundle.release["test_release"]:
             raise CalibrationError(
                 "test comparator release cannot authorize production judged runs"

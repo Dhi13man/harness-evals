@@ -19,6 +19,7 @@ from harness_evals.comparator_profiles import (
     parse_profile_descriptor,
     resolve_builtin_profile,
 )
+from harness_evals.comparator_runtime import CalibrationError, ComparatorRuntime
 
 
 class ComparatorProfileTests(unittest.TestCase):
@@ -102,6 +103,33 @@ class ComparatorProfileTests(unittest.TestCase):
             materialized_root = root
 
         self.assertFalse(materialized_root.exists())
+
+    def test_materialized_test_profile_loads_without_checkout_bindings(self) -> None:
+        runtime = ComparatorRuntime.load_builtin_profile(
+            BUILTIN_SOFTWARE_PROFILE_ID, use_test_release=True
+        )
+        root = runtime.root
+
+        self.assertEqual(runtime.profile_id, BUILTIN_SOFTWARE_PROFILE_ID)
+        self.assertTrue(root.is_dir())
+        self.assertTrue(runtime.profile_locks_valid)
+        self.assertFalse(runtime.protocol_locks_valid)
+        self.assertFalse(runtime.external_bindings_validated)
+        self.assertFalse(runtime.live_calibration_valid)
+        self.assertEqual(
+            runtime.release_summary["artifacts"], runtime.bundle.release["artifacts"]
+        )
+        runtime.close()
+        runtime.close()
+        self.assertFalse(root.exists())
+
+    def test_packaged_runtime_cannot_satisfy_production_calibration_gate(self) -> None:
+        runtime = ComparatorRuntime.load_builtin_profile(BUILTIN_SOFTWARE_PROFILE_ID)
+        try:
+            with self.assertRaisesRegex(CalibrationError, "external release bindings"):
+                runtime.require_live_calibration()
+        finally:
+            runtime.close()
 
     def test_resolution_snapshot_is_stable_after_package_drift(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

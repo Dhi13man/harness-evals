@@ -4520,7 +4520,20 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
             },
             certification=SimpleNamespace(valid=False, evidence_sha256=None),
             bundle=SimpleNamespace(release={"test_release": False}),
+            protocol_locks_valid=True,
         )
+        with patch.object(runner, "_load_comparator_runtime", return_value=runtime):
+            with self.assertRaisesRegex(RunnerError, "valid live comparator"):
+                runner._bind_holdout_plan(
+                    self.selection(),
+                    cases,
+                    comparisons,
+                    sources,
+                    case_records,
+                )
+
+        runtime.protocol_locks_valid = False
+        runtime.certification = SimpleNamespace(valid=True, evidence_sha256="a" * 64)
         with patch.object(runner, "_load_comparator_runtime", return_value=runtime):
             with self.assertRaisesRegex(RunnerError, "valid live comparator"):
                 runner._bind_holdout_plan(
