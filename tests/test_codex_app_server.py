@@ -1168,7 +1168,9 @@ class CodexProcessTransportTests(unittest.TestCase):
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
         with (
-            mock.patch("harness_evals.codex_app_server.subprocess.run", side_effect=run),
+            mock.patch(
+                "harness_evals.codex_app_server.subprocess.run", side_effect=run
+            ),
             mock.patch(
                 "harness_evals.codex_app_server._SystemdRecoveryProbe.confirm_unit_clean",
                 side_effect=(
@@ -1495,7 +1497,8 @@ class CleanupPoisonStoreTests(unittest.TestCase):
                     return_value=Path("/usr/bin/systemctl"),
                 ),
                 mock.patch(
-                    "harness_evals.codex_app_server.subprocess.Popen", return_value=process
+                    "harness_evals.codex_app_server.subprocess.Popen",
+                    return_value=process,
                 ),
                 mock.patch("harness_evals.codex_app_server._attest_process_executable"),
                 mock.patch(
@@ -1976,7 +1979,9 @@ class CleanupPoisonStoreTests(unittest.TestCase):
         probe = _SystemdRecoveryProbe(
             systemctl="/usr/bin/systemctl", cgroup_root=cgroup_root
         )
-        with mock.patch("harness_evals.codex_app_server.subprocess.run", side_effect=run):
+        with mock.patch(
+            "harness_evals.codex_app_server.subprocess.run", side_effect=run
+        ):
             state = probe.confirm_unit_clean(
                 self.UNIT_NAME,
                 "/user.slice/test.service",
@@ -2305,7 +2310,9 @@ class CodexProviderTests(unittest.TestCase):
     def test_provider_context_closes_runtime_bundle_and_rejects_reuse(self) -> None:
         roots, create = self.private_copy_factory()
         with (
-            mock.patch("harness_evals.comparator_runtime.tempfile.mkdtemp", side_effect=create),
+            mock.patch(
+                "harness_evals.comparator_runtime.tempfile.mkdtemp", side_effect=create
+            ),
             CodexAppServerProvider(
                 self.config(),
                 transport_factory=self.factory,
@@ -2803,7 +2810,9 @@ class CodexProviderTests(unittest.TestCase):
             mock.patch(
                 "harness_evals.codex_app_server.VerifiedExecutable", side_effect=capture
             ),
-            mock.patch("harness_evals.comparator_runtime.tempfile.mkdtemp", side_effect=create),
+            mock.patch(
+                "harness_evals.comparator_runtime.tempfile.mkdtemp", side_effect=create
+            ),
             self.assertRaisesRegex(ProviderError, "mode-0600"),
         ):
             CodexAppServerProvider(

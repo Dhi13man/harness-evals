@@ -11,6 +11,8 @@ updates:
       - github-actions
   - package-ecosystem: pip
     directory: /
+    exclude-paths:
+      - "cases/**"
     schedule:
       interval: weekly
       day: monday

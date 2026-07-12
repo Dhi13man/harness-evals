@@ -612,7 +612,9 @@ class ComparatorResultContractTests(unittest.TestCase):
                 fixture = self.fixture()
                 result = self.result(fixture)
                 with (
-                    patch("harness_evals.providers.canonical_sha256", side_effect=failure),
+                    patch(
+                        "harness_evals.providers.canonical_sha256", side_effect=failure
+                    ),
                     self.assertRaises(ProviderError) as caught,
                 ):
                     result.as_json(fixture["request"])  # type: ignore[arg-type]

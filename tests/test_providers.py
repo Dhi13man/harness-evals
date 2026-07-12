@@ -102,7 +102,9 @@ class ClaudeCliProviderTests(unittest.TestCase):
     def test_provider_context_closes_private_copy_and_rejects_reuse(self) -> None:
         roots, create = self.private_copy_factory()
         with (
-            patch("harness_evals.comparator_runtime.tempfile.mkdtemp", side_effect=create),
+            patch(
+                "harness_evals.comparator_runtime.tempfile.mkdtemp", side_effect=create
+            ),
             ClaudeCliProvider(self.config()) as provider,
         ):
             attestation = provider._verified_executable
@@ -124,7 +126,9 @@ class ClaudeCliProviderTests(unittest.TestCase):
             return attestation
 
         with (
-            patch("harness_evals.comparator_runtime.tempfile.mkdtemp", side_effect=create),
+            patch(
+                "harness_evals.comparator_runtime.tempfile.mkdtemp", side_effect=create
+            ),
             patch("harness_evals.providers.VerifiedExecutable", side_effect=capture),
             patch.object(
                 ClaudeCliProvider,
@@ -454,7 +458,9 @@ print(json.dumps({
         with (
             patch("harness_evals.providers.SandboxedClaudeExecutor"),
             patch("harness_evals.providers.validate_response", return_value=decision),
-            patch("harness_evals.providers.expected_transport_hashes", return_value=hashes),
+            patch(
+                "harness_evals.providers.expected_transport_hashes", return_value=hashes
+            ),
             patch("harness_evals.providers.validate_executor_evidence"),
         ):
             comparator.run_comparator(
@@ -677,7 +683,9 @@ print(json.dumps({
         with (
             patch("harness_evals.providers.SandboxedClaudeExecutor") as executor_type,
             patch("harness_evals.providers.validate_response", return_value=decision),
-            patch("harness_evals.providers.expected_transport_hashes", return_value=hashes),
+            patch(
+                "harness_evals.providers.expected_transport_hashes", return_value=hashes
+            ),
             patch("harness_evals.providers.validate_executor_evidence"),
         ):
             result = provider.run_comparator(request)
@@ -1106,7 +1114,9 @@ class SharedComparatorRuntimeTests(unittest.TestCase):
     def test_first_spend_journal_creation_fsyncs_file_and_parent(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             real_fsync = os.fsync
-            with patch("harness_evals.comparator_runtime.os.fsync", wraps=real_fsync) as fsync:
+            with patch(
+                "harness_evals.comparator_runtime.os.fsync", wraps=real_fsync
+            ) as fsync:
                 SpendLedger(2.0, Path(temporary) / "spend.jsonl").reserve(
                     1.0,
                     request_sha256=_REQUEST_SHA256,
@@ -1161,7 +1171,9 @@ class SharedComparatorRuntimeTests(unittest.TestCase):
                     target.chmod(0o600)
                 return chunk
 
-            with patch("harness_evals.comparator_runtime.os.read", side_effect=mutating_read):
+            with patch(
+                "harness_evals.comparator_runtime.os.read", side_effect=mutating_read
+            ):
                 with self.assertRaisesRegex(CalibrationError, "stable owner-only"):
                     load_private_json_capture(target)
 

@@ -4160,7 +4160,9 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
         plan = load_holdout_plan(self.plan_path)
         result_root = self.fixture.root / "partial-claim-result"
         result_root.mkdir(mode=0o700)
-        with patch("harness_evals.runner.os.write", side_effect=OSError("simulated crash")):
+        with patch(
+            "harness_evals.runner.os.write", side_effect=OSError("simulated crash")
+        ):
             with self.assertRaisesRegex(RunnerError, "persist.*claim"):
                 _claim_holdout_consumption(plan, self.suite, result_root.resolve())
         record_path = Path(self.payload["consumption_record_path"])
@@ -4586,7 +4588,9 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
         self.plan_path.chmod(0o600)
 
         ownership_runner = self.runner()
-        with patch("harness_evals.holdout_plan.os.getuid", return_value=os.getuid() + 1):
+        with patch(
+            "harness_evals.holdout_plan.os.getuid", return_value=os.getuid() + 1
+        ):
             with self.assertRaisesRegex(HoldoutPlanError, "current uid"):
                 load_holdout_plan(self.plan_path)
             with self.assertRaisesRegex(RunnerError, "current uid"):
