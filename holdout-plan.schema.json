@@ -354,6 +354,83 @@
       "pattern": "^[0-9a-f]{40}$",
       "type": "string"
     },
+    "source_bindings": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "git_ref",
+              "without_skill",
+              "worktree"
+            ]
+          },
+          "source_commit": {
+            "oneOf": [
+              {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_sha256_by_case": {
+            "additionalProperties": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "minProperties": 1,
+            "propertyNames": {
+              "pattern": "^[a-z0-9][a-z0-9._-]*$"
+            },
+            "type": "object"
+          },
+          "variant_id": {
+            "pattern": "^[a-z0-9][a-z0-9._-]*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "variant_id",
+          "kind",
+          "source_commit",
+          "source_sha256_by_case"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "without_skill"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "properties": {
+                "source_commit": {
+                  "type": "null"
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "source_commit": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ],
+        "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
     "consumption_record_path": {
       "minLength": 1,
       "pattern": "^/",
@@ -408,7 +485,10 @@
       "type": "object"
     },
     "schema_version": {
-      "const": 2
+      "enum": [
+        2,
+        3
+      ]
     },
     "seed": {
       "minimum": 0,
@@ -426,13 +506,53 @@
     "comparator_release_sha256",
     "comparator_calibration_evidence_sha256",
     "generator_provider",
-    "candidate_commit",
-    "original_commit",
     "consumption_record_path",
     "seed",
     "comparison_profile",
     "cases",
     "provenance"
+  ],
+  "oneOf": [
+    {
+      "not": {
+        "required": [
+          "source_bindings"
+        ]
+      },
+      "properties": {
+        "schema_version": {
+          "const": 2
+        }
+      },
+      "required": [
+        "candidate_commit",
+        "original_commit"
+      ]
+    },
+    {
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "candidate_commit"
+            ]
+          },
+          {
+            "required": [
+              "original_commit"
+            ]
+          }
+        ]
+      },
+      "properties": {
+        "schema_version": {
+          "const": 3
+        }
+      },
+      "required": [
+        "source_bindings"
+      ]
+    }
   ],
   "title": "Harness Evals sealed holdout plan",
   "type": "object"

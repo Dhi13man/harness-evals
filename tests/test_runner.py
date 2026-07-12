@@ -2338,6 +2338,74 @@ print(json.dumps({"passed": False, "assertions": [{"id": "answer-present", "pass
             "bb56f030d871f9cb5af42d1fae523140be90136caba30c335736f9401852e72c",
         )
 
+    def test_v5_source_fingerprint_binds_locator_paths_bytes_and_modes(self) -> None:
+        self.fixture.use_v5_judged()
+        suite = self.load()
+        case = suite.cases[0]
+        git_hash = runner_module._git_source_fingerprint(
+            self.fixture.repository,
+            self.fixture.treatment_commit,
+            case,
+            ignore_generated_caches=True,
+            canonical=True,
+        )
+        worktree_hash = runner_module._worktree_source_fingerprint(
+            self.fixture.repository,
+            case,
+            ignore_empty_directories=True,
+            canonical=True,
+        )
+        self.assertEqual(git_hash, worktree_hash)
+
+        alternate_bundle = self.fixture.repository / "skills/demo-copy"
+        shutil.copytree(self.fixture.repository / "skills/demo", alternate_bundle)
+        locator_case = replace(
+            case, bundle_source=case.bundle_source.parent / "demo-copy"
+        )
+        locator_hash = runner_module._worktree_source_fingerprint(
+            self.fixture.repository,
+            locator_case,
+            ignore_empty_directories=True,
+            canonical=True,
+        )
+        self.assertNotEqual(locator_hash, worktree_hash)
+
+        entrypoint = self.fixture.repository / "skills/demo/SKILL.md"
+        entrypoint.chmod(0o755)
+        try:
+            executable_hash = runner_module._worktree_source_fingerprint(
+                self.fixture.repository,
+                case,
+                ignore_empty_directories=True,
+                canonical=True,
+            )
+        finally:
+            entrypoint.chmod(0o644)
+        self.assertNotEqual(executable_hash, worktree_hash)
+
+        context_copy = self.fixture.repository / "context-copy.md"
+        context_copy.write_bytes(entrypoint.read_bytes())
+        context_case = replace(
+            case,
+            context_files=(case.bundle_source.parent.parent / "context-copy.md",),
+        )
+        context_path_hash = runner_module._worktree_source_fingerprint(
+            self.fixture.repository,
+            context_case,
+            ignore_empty_directories=True,
+            canonical=True,
+        )
+        self.assertNotEqual(context_path_hash, worktree_hash)
+
+        context_copy.write_text("changed context\n", encoding="utf-8")
+        context_bytes_hash = runner_module._worktree_source_fingerprint(
+            self.fixture.repository,
+            context_case,
+            ignore_empty_directories=True,
+            canonical=True,
+        )
+        self.assertNotEqual(context_bytes_hash, context_path_hash)
+
     def test_ab_ba_detects_position_bias_and_seed_reproduces_mapping(self) -> None:
         provider_one = self.fixture.provider(comparator_always_a=True)
         first = self.runner(provider_one).run(
@@ -5070,8 +5138,26 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
             hashlib.sha256(output.read_bytes()).hexdigest(), result["plan_sha256"]
         )
         plan = load_holdout_plan(output)
-        self.assertEqual(plan.candidate_commit, self.fixture.treatment_commit)
-        self.assertEqual(plan.original_commit, self.fixture.baseline_commit)
+        self.assertEqual(plan.schema_version, 3)
+        bindings = {binding.variant_id: binding for binding in plan.source_bindings}
+        self.assertEqual(
+            bindings["candidate"].source_commit, self.fixture.treatment_commit
+        )
+        self.assertEqual(
+            bindings["original"].source_commit, self.fixture.baseline_commit
+        )
+        self.assertIsNone(bindings["no-skill"].source_commit)
+        self.assertEqual(
+            {binding.kind for binding in plan.source_bindings},
+            {"git_ref", "without_skill", "worktree"},
+        )
+        self.assertTrue(
+            all(
+                tuple(case_id for case_id, _digest in binding.source_sha256_by_case)
+                == tuple(sorted(case.id for case in plan.cases))
+                for binding in plan.source_bindings
+            )
+        )
         self.assertEqual(
             plan.consumption_record_path,
             output.with_name(f"{output.name}.consumption.json"),
@@ -5146,6 +5232,143 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
         self.assertFalse(consumed_output.exists())
         self.assertEqual(self.provider.agent_requests, [])
         self.assertEqual(self.provider.comparator_requests, [])
+
+    def test_schema_v5_prepares_generic_source_bindings_without_reserved_ids(
+        self,
+    ) -> None:
+        legacy_runner = self.production_runner(self.runner(production=False))
+        comparator_runtime = legacy_runner._load_comparator_runtime()
+        external_worktree = self.fixture.root / "external-treatment"
+        subprocess.run(
+            [
+                "git",
+                "clone",
+                "-q",
+                str(self.fixture.repository),
+                str(external_worktree),
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(external_worktree),
+                "config",
+                "user.email",
+                "external@example.invalid",
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(external_worktree),
+                "config",
+                "user.name",
+                "External Tests",
+            ],
+            check=True,
+        )
+        for skill in ("engineering", "testing"):
+            path = external_worktree / f"skills/{skill}/SKILL.md"
+            path.write_text(
+                path.read_text(encoding="utf-8") + "\nExternal treatment.\n",
+                encoding="utf-8",
+            )
+        subprocess.run(
+            ["git", "-C", str(external_worktree), "add", "skills"],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(external_worktree),
+                "commit",
+                "-q",
+                "-m",
+                "external treatment",
+            ],
+            check=True,
+        )
+        self.fixture.manifest["schema_version"] = 5
+        self.fixture.manifest["evaluation_mode"] = "judged"
+        self.fixture.manifest["comparator_profile"] = {
+            "kind": "builtin",
+            "id": "software-engineering-v2.3",
+        }
+        self.fixture.manifest["shared_verifier_dir"] = None
+        variant_ids = {
+            "no-skill": "blank",
+            "original": "reference",
+            "candidate": "treatment",
+        }
+        for variant in self.fixture.manifest["variants"]:
+            variant["id"] = variant_ids[variant["id"]]
+            if variant["id"] == "treatment":
+                variant["root"] = Path(
+                    os.path.relpath(external_worktree, self.fixture.suite_root)
+                ).as_posix()
+        comparison_ids = ("reference-treatment", "blank-treatment")
+        for comparison, comparison_id in zip(
+            self.fixture.manifest["comparisons"], comparison_ids, strict=True
+        ):
+            comparison["id"] = comparison_id
+            comparison["control"] = variant_ids[comparison["control"]]
+            comparison["treatment"] = variant_ids[comparison["treatment"]]
+        self.fixture.manifest["holdout"] = {"comparison_ids": list(comparison_ids)}
+        for case in self.fixture.manifest["cases"]:
+            case["bundle_source"] = f"skills/{case['skill']}"
+        self.fixture.save_manifest()
+        suite = load_suite(self.fixture.manifest_path)
+        runner = self.runner(suite, production=False)
+        runner._comparator_runtime = comparator_runtime
+        runner = self.production_runner(runner)
+        output = self.fixture.root / "generic-source-plan.json"
+
+        result = runner.prepare_holdout_plan(
+            output_path=output,
+            plan_id="generic-source-v1",
+            reviewers=("reviewer-a",),
+            freeze_record="review:freeze:generic-source-v1",
+            seal_record="review:seal:generic-source-v1",
+        )
+        plan = load_holdout_plan(output)
+        schema = json.loads(
+            (HARNESS_ROOT / "holdout-plan.schema.json").read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(plan.schema_version, 3)
+        self.assertFalse(
+            list(
+                Draft202012Validator(schema).iter_errors(
+                    json.loads(output.read_text(encoding="utf-8"))
+                )
+            )
+        )
+        self.assertEqual(
+            tuple(binding.variant_id for binding in plan.source_bindings),
+            ("blank", "reference", "treatment"),
+        )
+        bindings = {
+            binding.variant_id: binding.as_json() for binding in plan.source_bindings
+        }
+        self.assertIsNone(bindings["blank"]["source_commit"])
+        self.assertEqual(
+            set(bindings["blank"]["source_sha256_by_case"].values()),
+            {runner_module.EMPTY_SOURCE_SHA256},
+        )
+        self.assertEqual(
+            result["preflight"]["selection"]["comparison_ids"],
+            list(comparison_ids),
+        )
+        for case in suite.cases:
+            self.assertNotEqual(
+                bindings["reference"]["source_sha256_by_case"][case.id],
+                bindings["treatment"]["source_sha256_by_case"][case.id],
+            )
 
     def test_holdout_consumption_is_one_shot_across_roots_copies_and_crashes(
         self,
@@ -6927,7 +7150,9 @@ class CheckedInSuiteTests(unittest.TestCase):
             (HARNESS_ROOT / "holdout-plan.schema.json").read_text(encoding="utf-8")
         )
         self.assertFalse(schema["additionalProperties"])
-        self.assertEqual(schema["properties"]["schema_version"]["const"], 2)
+        self.assertEqual(schema["properties"]["schema_version"]["enum"], [2, 3])
+        self.assertEqual(len(schema["oneOf"]), 2)
+        self.assertIn("source_bindings", schema["properties"])
         provenance = schema["properties"]["provenance"]
         self.assertEqual(
             provenance["properties"]["assurance"]["const"],

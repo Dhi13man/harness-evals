@@ -67,7 +67,6 @@ def main(argv: list[str] | None = None) -> int:
     summary = {
         "binding_verified": result["binding_verified"],
         "case_count": result["case_count"],
-        "candidate_commit": proof["holdout_plan"]["candidate_commit"],
         "comparator_calibration_evidence_sha256": proof["holdout_plan"][
             "comparator_calibration_evidence_sha256"
         ],
@@ -77,9 +76,9 @@ def main(argv: list[str] | None = None) -> int:
         "file_mode": result["file_mode"],
         "generator_provider": proof["holdout_plan"]["generator_provider"],
         "manifest_sha256": proof["manifest_sha256"],
-        "original_commit": proof["holdout_plan"]["original_commit"],
         "plan_path": result["plan_path"],
         "plan_sha256": result["plan_sha256"],
+        "source_bindings": proof["holdout_plan"]["source_bindings"],
     }
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0

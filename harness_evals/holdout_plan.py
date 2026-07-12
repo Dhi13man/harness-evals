@@ -19,7 +19,12 @@ _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 _SKILL = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
+_GIT_OBJECT_ID = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _MIN_CASES_PER_SKILL = 8
+SOURCE_FINGERPRINT_DOMAIN = b"harness-evals-source-fingerprint-v2\0"
+EMPTY_SOURCE_SHA256 = hashlib.sha256(
+    SOURCE_FINGERPRINT_DOMAIN + b"empty-source\0"
+).hexdigest()
 
 
 class HoldoutPlanError(ValueError):
@@ -91,17 +96,35 @@ class HoldoutProviderBinding:
 
 
 @dataclass(frozen=True)
+class HoldoutSourceBinding:
+    variant_id: str
+    kind: str
+    source_commit: str | None
+    source_sha256_by_case: tuple[tuple[str, str], ...]
+
+    def as_json(self) -> dict[str, Any]:
+        return {
+            "variant_id": self.variant_id,
+            "kind": self.kind,
+            "source_commit": self.source_commit,
+            "source_sha256_by_case": dict(self.source_sha256_by_case),
+        }
+
+
+@dataclass(frozen=True)
 class HoldoutPlan:
     path: Path
     raw_bytes: bytes
     sha256: str
+    schema_version: int
     plan_id: str
     manifest_sha256: str
     comparator_release_sha256: str
     comparator_calibration_evidence_sha256: str | None
     generator_provider: HoldoutProviderBinding
-    candidate_commit: str
-    original_commit: str
+    candidate_commit: str | None
+    original_commit: str | None
+    source_bindings: tuple[HoldoutSourceBinding, ...]
     consumption_record_path: Path
     seed: int
     comparison_profile: tuple[HoldoutComparisonBinding, ...]
@@ -118,7 +141,7 @@ class HoldoutPlan:
             raise HoldoutPlanError("holdout plan bytes drifted after validation")
 
     def as_evidence(self) -> dict[str, Any]:
-        return {
+        evidence = {
             "plan_id": self.plan_id,
             "path": str(self.path),
             "sha256": self.sha256,
@@ -128,8 +151,6 @@ class HoldoutPlan:
                 self.comparator_calibration_evidence_sha256
             ),
             "generator_provider": self.generator_provider.as_json(),
-            "candidate_commit": self.candidate_commit,
-            "original_commit": self.original_commit,
             "consumption_record_path": str(self.consumption_record_path),
             "seed": self.seed,
             "comparison_profile": [item.as_json() for item in self.comparison_profile],
@@ -144,6 +165,15 @@ class HoldoutPlan:
                 "seal_record": self.seal_record,
             },
         }
+        if self.schema_version == 2:
+            evidence["candidate_commit"] = self.candidate_commit
+            evidence["original_commit"] = self.original_commit
+        else:
+            evidence["schema_version"] = self.schema_version
+            evidence["source_bindings"] = [
+                binding.as_json() for binding in self.source_bindings
+            ]
+        return evidence
 
 
 def _reject_constant(value: str) -> None:
@@ -464,6 +494,86 @@ def _parse_provider(value: Any) -> HoldoutProviderBinding:
     )
 
 
+def _parse_source_bindings(
+    value: Any,
+    *,
+    comparison_profile: tuple[HoldoutComparisonBinding, ...],
+    cases: tuple[HoldoutCaseBinding, ...],
+) -> tuple[HoldoutSourceBinding, ...]:
+    if not isinstance(value, list) or not value:
+        raise HoldoutPlanError("source_bindings must be a non-empty array")
+    expected_variants = tuple(
+        sorted(
+            {
+                variant_id
+                for comparison in comparison_profile
+                for variant_id in (comparison.control, comparison.treatment)
+            }
+        )
+    )
+    expected_cases = tuple(sorted(case.id for case in cases))
+    bindings: list[HoldoutSourceBinding] = []
+    for index, raw_binding in enumerate(value):
+        location = f"source_bindings[{index}]"
+        fields = {"variant_id", "kind", "source_commit", "source_sha256_by_case"}
+        item = _object(raw_binding, location, required=fields, allowed=fields)
+        kind = _string(item["kind"], f"{location}.kind")
+        if kind not in {"git_ref", "without_skill", "worktree"}:
+            raise HoldoutPlanError(f"{location}.kind is unsupported: {kind!r}")
+        source_commit = item["source_commit"]
+        if source_commit is not None:
+            source_commit = _string(
+                source_commit, f"{location}.source_commit", pattern=_GIT_OBJECT_ID
+            )
+        if (kind == "without_skill") != (source_commit is None):
+            raise HoldoutPlanError(
+                f"{location}.source_commit must be null only for without_skill"
+            )
+        raw_hashes = item["source_sha256_by_case"]
+        if not isinstance(raw_hashes, dict):
+            raise HoldoutPlanError(
+                f"{location}.source_sha256_by_case must be an object"
+            )
+        observed_cases = tuple(raw_hashes)
+        if observed_cases != expected_cases:
+            raise HoldoutPlanError(
+                f"{location}.source_sha256_by_case keys must exactly match sorted case ids"
+            )
+        hashes = tuple(
+            (
+                case_id,
+                _string(
+                    raw_hashes[case_id],
+                    f"{location}.source_sha256_by_case.{case_id}",
+                    pattern=_SHA256,
+                ),
+            )
+            for case_id in expected_cases
+        )
+        if kind == "without_skill" and {digest for _case, digest in hashes} != {
+            EMPTY_SOURCE_SHA256
+        }:
+            raise HoldoutPlanError(
+                f"{location}.without_skill must use one canonical empty-source digest"
+            )
+        bindings.append(
+            HoldoutSourceBinding(
+                variant_id=_string(
+                    item["variant_id"], f"{location}.variant_id", pattern=_IDENTIFIER
+                ),
+                kind=kind,
+                source_commit=source_commit,
+                source_sha256_by_case=hashes,
+            )
+        )
+    observed_variants = tuple(binding.variant_id for binding in bindings)
+    if observed_variants != expected_variants:
+        raise HoldoutPlanError(
+            "source_bindings variant ids must exactly match selected variants in sorted order"
+        )
+    return tuple(bindings)
+
+
 def load_holdout_plan(path: Path) -> HoldoutPlan:
     """Load a sealed, externally supplied trusted-review attestation."""
 
@@ -485,7 +595,7 @@ def load_holdout_plan(path: Path) -> HoldoutPlan:
     except json.JSONDecodeError as exc:
         raise HoldoutPlanError(f"holdout plan is invalid JSON: {exc}") from exc
 
-    fields = {
+    common_fields = {
         "schema_version",
         "plan_id",
         "status",
@@ -493,17 +603,23 @@ def load_holdout_plan(path: Path) -> HoldoutPlan:
         "comparator_release_sha256",
         "comparator_calibration_evidence_sha256",
         "generator_provider",
-        "candidate_commit",
-        "original_commit",
         "consumption_record_path",
         "seed",
         "comparison_profile",
         "cases",
         "provenance",
     }
+    if not isinstance(raw, dict):
+        raise HoldoutPlanError("holdout plan must be an object")
+    schema_version = _integer(raw.get("schema_version"), "schema_version", minimum=2)
+    if schema_version == 2:
+        version_fields = {"candidate_commit", "original_commit"}
+    elif schema_version == 3:
+        version_fields = {"source_bindings"}
+    else:
+        raise HoldoutPlanError("schema_version must be 2 or 3")
+    fields = common_fields | version_fields
     data = _object(raw, "holdout plan", required=fields, allowed=fields)
-    if _integer(data["schema_version"], "schema_version", minimum=2) != 2:
-        raise HoldoutPlanError("schema_version must be 2")
     if _string(data["status"], "status") != "sealed":
         raise HoldoutPlanError("status must be 'sealed'")
 
@@ -536,6 +652,16 @@ def load_holdout_plan(path: Path) -> HoldoutPlan:
         raise HoldoutPlanError(
             "each holdout skill needs at least 8 unique task-content fingerprints"
         )
+
+    source_bindings = (
+        _parse_source_bindings(
+            data["source_bindings"],
+            comparison_profile=comparison_profile,
+            cases=cases,
+        )
+        if schema_version == 3
+        else ()
+    )
 
     provenance_fields = {
         "assurance",
@@ -571,6 +697,7 @@ def load_holdout_plan(path: Path) -> HoldoutPlan:
         path=resolved,
         raw_bytes=raw_bytes,
         sha256=hashlib.sha256(raw_bytes).hexdigest(),
+        schema_version=schema_version,
         plan_id=_string(data["plan_id"], "plan_id", pattern=_IDENTIFIER),
         manifest_sha256=_string(
             data["manifest_sha256"], "manifest_sha256", pattern=_SHA256
@@ -585,12 +712,17 @@ def load_holdout_plan(path: Path) -> HoldoutPlan:
             "comparator_calibration_evidence_sha256",
         ),
         generator_provider=_parse_provider(data["generator_provider"]),
-        candidate_commit=_string(
-            data["candidate_commit"], "candidate_commit", pattern=_COMMIT
+        candidate_commit=(
+            _string(data["candidate_commit"], "candidate_commit", pattern=_COMMIT)
+            if schema_version == 2
+            else None
         ),
-        original_commit=_string(
-            data["original_commit"], "original_commit", pattern=_COMMIT
+        original_commit=(
+            _string(data["original_commit"], "original_commit", pattern=_COMMIT)
+            if schema_version == 2
+            else None
         ),
+        source_bindings=source_bindings,
         consumption_record_path=_absolute_path(
             data["consumption_record_path"], "consumption_record_path"
         ),
