@@ -12,18 +12,23 @@ All notable changes to Harness Evals are documented in this file. The format fol
 - Added production objective-only holdouts that seal the canonical verifier acceptance policy without constructing a comparator.
 - Added schema v6 with reviewed provider adapter IDs, immutable capability declarations, and canonical capability digests.
 - Added holdout-plan schema v4 with role-specific generator and comparator authority bindings.
+- Added schema v7 with explicit workspace-diff, final-text, and final-JSON artifact contracts.
+- Added bounded LF text and RFC 8785 JSON normalization with canonical artifact evidence.
+- Added read-only verifier artifact mounts and pristine read-only fixture workspaces for final-output cases.
 
 ### Changed
 
 - Separated source authority from comparator judgment authority. Judged plans bind profile, release, and certification evidence; objective plans bind verifier-policy evidence.
 - Limited holdout-plan schema v2 to the legacy schema-v2 through schema-v4 candidate/original adapter without rewriting historical plan bytes.
 - Routed provider construction, scheduling, sandbox selection, billing evidence, and provenance through reviewed adapter capabilities while preserving schema-v2 through schema-v5 compatibility.
+- Advanced reviewed provider capabilities to revision 2 for declared final-output capture; unconsumed schema-v4 authority plans from revision 1 must be re-prepared.
 
 ### Security
 
 - Added literal Git path handling, bounded source enumeration, Git/worktree snapshot parity, runtime shared-path revalidation, verifier-only source separation, and read-only configured shared mounts.
 - Added domain-separated source fingerprints over bundle locators, paths, bytes, executable modes, and context files; equal evaluated arms, source drift, mode confusion, and authority substitution fail before dispatch.
 - Bound production provider authority to reviewed capability, configuration, runtime provenance, executable identity, and non-injected provider instances; drift and instance substitution fail before dispatch or release.
+- Reject malformed output before verification or judgment, reject uncalibrated judged artifact kinds before dispatch, and isolate final-output verification from candidate workspace mutations.
 
 ## [0.2.0] - 2026-07-12
 
