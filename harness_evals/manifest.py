@@ -12,7 +12,9 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from .comparator_calibration import calibration as _calibration
 from .comparator_profiles import (
+    BUILTIN_PROFILE_IDS,
     BUILTIN_SOFTWARE_PROFILE_ID,
     ComparatorProfileError,
     ComparatorProfileResources,
@@ -338,10 +340,6 @@ def _parse_comparator_profile(raw: Any, suite_root: Path) -> ComparatorProfileSp
                 allowed={"kind", "id"},
             )
             profile_id = _string(exact["id"], "comparator_profile.id")
-            if profile_id != BUILTIN_SOFTWARE_PROFILE_ID:
-                raise ManifestError(
-                    f"unknown built-in comparator profile: {profile_id}"
-                )
             resources = resolve_builtin_profile(profile_id)
             return ComparatorProfileSpec(
                 kind="builtin",
@@ -362,7 +360,7 @@ def _parse_comparator_profile(raw: Any, suite_root: Path) -> ComparatorProfileSp
                 "comparator_profile.path",
             )
             resources = resolve_profile_directory(profile_root)
-            if resources.descriptor.id == BUILTIN_SOFTWARE_PROFILE_ID:
+            if resources.descriptor.id in BUILTIN_PROFILE_IDS:
                 raise ManifestError(
                     "suite-local comparator profile must not shadow a built-in id"
                 )
@@ -606,7 +604,11 @@ def _parse_comparisons(raw: Any, variant_ids: set[str]) -> tuple[ComparisonSpec,
 
 
 def _parse_cases(
-    raw: Any, suite_root: Path, *, require_comparator_contract: bool
+    raw: Any,
+    suite_root: Path,
+    *,
+    require_comparator_contract: bool,
+    comparator_contract_vocabulary: dict[str, frozenset[str]] | None,
 ) -> tuple[CaseSpec, ...]:
     items = _list(raw, "cases", minimum=1)
     cases: list[CaseSpec] = []
@@ -730,7 +732,9 @@ def _parse_cases(
                 critical_expectations=critical,
                 comparator_contract=(
                     _parse_comparator_contract(
-                        data["comparator_contract"], f"{location}.comparator_contract"
+                        data["comparator_contract"],
+                        f"{location}.comparator_contract",
+                        comparator_contract_vocabulary,
                     )
                     if require_comparator_contract
                     else None
@@ -755,7 +759,13 @@ def _long_text(value: Any, location: str) -> str:
     return result
 
 
-def _parse_comparator_contract(raw: Any, location: str) -> dict[str, Any]:
+def _parse_comparator_contract(
+    raw: Any,
+    location: str,
+    vocabulary: dict[str, frozenset[str]] | None,
+) -> dict[str, Any]:
+    if vocabulary is None:
+        raise ManifestError(f"{location} has no comparator profile vocabulary")
     contract = _object(
         raw,
         location,
@@ -776,7 +786,7 @@ def _parse_comparator_contract(raw: Any, location: str) -> dict[str, Any]:
             allowed={"id", "kind", "text"},
         )
         kind = _string(requirement["kind"], f"{item_location}.kind")
-        if kind not in {"required_behavior", "hard_constraint"}:
+        if kind not in vocabulary["requirement_kinds"]:
             raise ManifestError(f"{item_location}.kind is unsupported")
         requirement_id = _string(
             requirement["id"], f"{item_location}.id", pattern=IDENTIFIER_RE
@@ -800,7 +810,7 @@ def _parse_comparator_contract(raw: Any, location: str) -> dict[str, Any]:
             allowed={"kind", "detail"},
         )
         kind = _string(basis["kind"], f"{location}.performance_basis.kind")
-        if kind not in {"workload", "asymptotic", "measurement"}:
+        if kind not in vocabulary["performance_basis_kinds"]:
             raise ManifestError(f"{location}.performance_basis.kind is unsupported")
         parsed_performance = {
             "kind": kind,
@@ -809,19 +819,13 @@ def _parse_comparator_contract(raw: Any, location: str) -> dict[str, Any]:
             ),
         }
     qualitative = contract["qualitative_bases"]
-    if not isinstance(qualitative, dict) or not set(qualitative) <= {
-        "functional_correctness",
-        "security_reliability",
-    }:
+    if (
+        not isinstance(qualitative, dict)
+        or not set(qualitative) <= vocabulary["qualitative_basis_criteria"]
+    ):
         raise ManifestError(f"{location}.qualitative_bases is invalid")
     parsed_qualitative: dict[str, dict[str, str]] = {}
-    allowed_kinds = {
-        "test-fault-sensitivity",
-        "behavioral-quality",
-        "defense-in-depth",
-        "failure-determinism",
-        "concurrency-margin",
-    }
+    allowed_kinds = vocabulary["qualitative_basis_kinds"]
     for criterion, raw_basis in qualitative.items():
         basis_location = f"{location}.qualitative_bases.{criterion}"
         basis = _object(
@@ -842,6 +846,51 @@ def _parse_comparator_contract(raw: Any, location: str) -> dict[str, Any]:
         "performance_basis": parsed_performance,
         "qualitative_bases": parsed_qualitative,
     }
+
+
+def _comparator_contract_vocabulary(
+    profile: ComparatorProfileSpec | None,
+) -> dict[str, frozenset[str]] | None:
+    if profile is None:
+        return None
+    if profile.resources is None:
+        return {
+            "requirement_kinds": frozenset({"required_behavior", "hard_constraint"}),
+            "performance_basis_kinds": frozenset(
+                {"workload", "asymptotic", "measurement"}
+            ),
+            "qualitative_basis_criteria": frozenset(
+                {"functional_correctness", "security_reliability"}
+            ),
+            "qualitative_basis_kinds": frozenset(
+                {
+                    "test-fault-sensitivity",
+                    "behavioral-quality",
+                    "defense-in-depth",
+                    "failure-determinism",
+                    "concurrency-margin",
+                }
+            ),
+        }
+    try:
+        raw = profile.resources.read_bytes("semantic_contract").decode("utf-8")
+        contract = _calibration.parse_json_object(
+            raw, f"comparator profile {profile.id} semantic contract"
+        )
+        _calibration.validate_semantic_contract(contract)
+        return {
+            field: frozenset(contract[field])
+            for field in (
+                "requirement_kinds",
+                "performance_basis_kinds",
+                "qualitative_basis_criteria",
+                "qualitative_basis_kinds",
+            )
+        }
+    except (UnicodeDecodeError, _calibration.CalibrationError) as exc:
+        raise ManifestError(
+            f"comparator profile {profile.id} semantic contract is invalid: {exc}"
+        ) from exc
 
 
 def load_suite(path: str | Path) -> SuiteSpec:
@@ -938,6 +987,9 @@ def load_suite(path: str | Path) -> SuiteSpec:
         root["cases"],
         suite_root,
         require_comparator_contract=evaluation_mode == "judged",
+        comparator_contract_vocabulary=_comparator_contract_vocabulary(
+            comparator_profile
+        ),
     )
     return SuiteSpec(
         path=manifest_path,

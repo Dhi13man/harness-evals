@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "id": "plain-language-revision-v1",
+  "version": "1.0.0",
+  "engine_contract": "eligibility-pareto-v1",
+  "resources": {
+    "manifest": "manifest.json",
+    "manifest_schema": "manifest.schema.json",
+    "rubric": "rubric.json",
+    "request_template": "request-template.json",
+    "response_schema": "response.schema.json",
+    "evidence_schema": "evidence.schema.json",
+    "semantic_contract": "semantic-contract.json",
+    "production_release": "release.json",
+    "test_release": "tests/test-release.json"
+  },
+  "supported_artifact_kinds": [
+    "workspace_diff"
+  ]
+}

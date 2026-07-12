@@ -1,0 +1,646 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "manifest.schema.json",
+  "x-artifact-version": "2.3.0",
+  "title": "Plain-language revision calibration corpus",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schema_version",
+    "corpus_id",
+    "review_policy",
+    "pairs"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "manifest.schema.json"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "corpus_id": {
+      "const": "plain-language-revision-corpus-v1"
+    },
+    "review_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "historical_rubric_version",
+        "effective_rubric_version",
+        "scoring_protocol_version",
+        "resolution_authority",
+        "history_rule"
+      ],
+      "properties": {
+        "historical_rubric_version": {
+          "const": "1.0.0"
+        },
+        "effective_rubric_version": {
+          "const": "1.0.0"
+        },
+        "scoring_protocol_version": {
+          "const": "2.3.0"
+        },
+        "resolution_authority": {
+          "const": "fixture-resolution-v1"
+        },
+        "history_rule": {
+          "type": "string",
+          "minLength": 40
+        }
+      }
+    },
+    "pairs": {
+      "type": "array",
+      "minItems": 10,
+      "maxItems": 10,
+      "items": {
+        "$ref": "#/$defs/pair"
+      }
+    }
+  },
+  "$defs": {
+    "requirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "text"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "kind": {
+          "enum": [
+            "required_behavior",
+            "hard_constraint"
+          ]
+        },
+        "text": {
+          "type": "string",
+          "minLength": 20
+        }
+      }
+    },
+    "qualitativeBasis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "detail"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "source-fidelity",
+            "reader-comprehension",
+            "audience-alignment",
+            "behavioral-quality"
+          ]
+        },
+        "detail": {
+          "type": "string",
+          "minLength": 20
+        }
+      }
+    },
+    "eligibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "A",
+        "B"
+      ],
+      "properties": {
+        "A": {
+          "$ref": "#/$defs/eligibilityDecision"
+        },
+        "B": {
+          "$ref": "#/$defs/eligibilityDecision"
+        }
+      }
+    },
+    "eligibilityDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decision",
+        "violations"
+      ],
+      "properties": {
+        "decision": {
+          "enum": [
+            "eligible",
+            "ineligible",
+            "unknown"
+          ]
+        },
+        "violations": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        }
+      }
+    },
+    "effectiveEligibilityDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decision",
+        "violations",
+        "requirement_statuses"
+      ],
+      "properties": {
+        "decision": {
+          "enum": [
+            "eligible",
+            "ineligible",
+            "unknown"
+          ]
+        },
+        "violations": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "requirement_statuses": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "enum": [
+              "satisfied",
+              "violated",
+              "unknown"
+            ]
+          }
+        }
+      }
+    },
+    "effectiveEligibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "A",
+        "B"
+      ],
+      "properties": {
+        "A": {
+          "$ref": "#/$defs/effectiveEligibilityDecision"
+        },
+        "B": {
+          "$ref": "#/$defs/effectiveEligibilityDecision"
+        }
+      }
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "labelSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reviewer_id",
+        "eligibility",
+        "criteria",
+        "rationale"
+      ],
+      "properties": {
+        "reviewer_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "eligibility": {
+          "$ref": "#/$defs/eligibility"
+        },
+        "criteria": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {
+            "enum": [
+              "A",
+              "B",
+              "tie"
+            ]
+          }
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 20
+        }
+      }
+    },
+    "resolution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reviewer_id",
+        "eligibility",
+        "criteria",
+        "rationale",
+        "method"
+      ],
+      "properties": {
+        "reviewer_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "eligibility": {
+          "$ref": "#/$defs/eligibility"
+        },
+        "criteria": {
+          "$ref": "#/$defs/effectiveCriteria"
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 20
+        },
+        "method": {
+          "enum": [
+            "independent-agreement",
+            "root-resolution"
+          ]
+        }
+      }
+    },
+    "effectiveCriteria": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {
+            "enum": [
+              "A",
+              "B",
+              "tie"
+            ]
+          }
+        }
+      ]
+    },
+    "effectiveLabelSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reviewer_id",
+        "eligibility",
+        "criteria",
+        "rationale"
+      ],
+      "properties": {
+        "reviewer_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "eligibility": {
+          "$ref": "#/$defs/eligibility"
+        },
+        "criteria": {
+          "$ref": "#/$defs/effectiveCriteria"
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 20
+        }
+      }
+    },
+    "scoringGold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reviewer_id",
+        "eligibility",
+        "criteria",
+        "rationale",
+        "method"
+      ],
+      "properties": {
+        "reviewer_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "eligibility": {
+          "$ref": "#/$defs/effectiveEligibility"
+        },
+        "criteria": {
+          "$ref": "#/$defs/effectiveCriteria"
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 20
+        },
+        "method": {
+          "const": "root-resolution"
+        }
+      }
+    },
+    "pair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "language",
+        "categories",
+        "critical",
+        "task",
+        "contract",
+        "base_files",
+        "diff_a",
+        "diff_b",
+        "provenance",
+        "probes",
+        "sentinel",
+        "repetitions",
+        "adjudication"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "language": {
+          "enum": [
+            "text"
+          ]
+        },
+        "categories": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "critical": {
+          "type": "boolean"
+        },
+        "task": {
+          "type": "string",
+          "minLength": 20
+        },
+        "contract": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "requirements",
+            "performance_basis",
+            "qualitative_bases"
+          ],
+          "properties": {
+            "requirements": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/requirement"
+              }
+            },
+            "performance_basis": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "kind",
+                    "detail"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "enum": []
+                    },
+                    "detail": {
+                      "type": "string",
+                      "minLength": 20
+                    }
+                  }
+                }
+              ]
+            },
+            "qualitative_bases": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "factual_fidelity": {
+                  "$ref": "#/$defs/qualitativeBasis"
+                },
+                "reader_clarity": {
+                  "$ref": "#/$defs/qualitativeBasis"
+                },
+                "audience_fit": {
+                  "$ref": "#/$defs/qualitativeBasis"
+                },
+                "concision": {
+                  "$ref": "#/$defs/qualitativeBasis"
+                }
+              }
+            }
+          }
+        },
+        "base_files": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "diff_a": {
+          "type": "string",
+          "pattern": "^diff --git a/"
+        },
+        "diff_b": {
+          "type": "string",
+          "pattern": "^diff --git a/"
+        },
+        "provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "reference",
+            "machine_check"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "machine",
+                "expert"
+              ]
+            },
+            "reference": {
+              "type": "string",
+              "minLength": 20
+            },
+            "machine_check": {
+              "enum": [
+                "identical-patches",
+                null
+              ]
+            }
+          }
+        },
+        "probes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "injection",
+            "length_bias",
+            "preservation_tokens"
+          ],
+          "properties": {
+            "injection": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "side",
+                    "location",
+                    "token"
+                  ],
+                  "properties": {
+                    "side": {
+                      "enum": [
+                        "A",
+                        "B"
+                      ]
+                    },
+                    "location": {
+                      "enum": [
+                        "comment",
+                        "string",
+                        "path"
+                      ]
+                    },
+                    "token": {
+                      "type": "string",
+                      "minLength": 4
+                    }
+                  }
+                }
+              ]
+            },
+            "length_bias": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "longer_side",
+                    "kind"
+                  ],
+                  "properties": {
+                    "longer_side": {
+                      "enum": [
+                        "A",
+                        "B"
+                      ]
+                    },
+                    "kind": {
+                      "enum": [
+                        "necessary",
+                        "harmful"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "preservation_tokens": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "sentinel": {
+          "type": "boolean"
+        },
+        "repetitions": {
+          "enum": [
+            1,
+            3
+          ]
+        },
+        "adjudication": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "reviewer_a",
+            "reviewer_b",
+            "re_review",
+            "resolution",
+            "scoring_gold"
+          ],
+          "properties": {
+            "reviewer_a": {
+              "$ref": "#/$defs/labelSet"
+            },
+            "reviewer_b": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/labelSet"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "re_review": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/effectiveLabelSet"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "resolution": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/resolution"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "scoring_gold": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/scoringGold"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

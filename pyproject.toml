@@ -45,6 +45,7 @@ include = ["harness_evals*"]
 [tool.setuptools.package-data]
 "harness_evals" = ["comparator-profile-authority.json"]
 "harness_evals.comparator_calibration" = ["*.json", "README.md", "tests/*.json"]
+"harness_evals.plain_language_calibration" = ["*.json", "tests/*.json"]
 
 [tool.ruff]
 line-length = 88

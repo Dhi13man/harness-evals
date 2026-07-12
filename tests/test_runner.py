@@ -537,18 +537,22 @@ class SuiteFixture:
         self.save_manifest()
 
     def create_data_profile(
-        self, relative: str, *, profile_id: str = "suite-local-software-v2.3"
+        self,
+        relative: str,
+        *,
+        profile_id: str = "suite-local-software-v2.3",
+        source_directory: str = "comparator_calibration",
     ) -> Path:
         destination = self.suite_root / relative
         shutil.copytree(
-            self.suite_root / "harness_evals/comparator_calibration",
+            self.suite_root / "harness_evals" / source_directory,
             destination,
         )
         descriptor_path = destination / "profile.json"
         descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
         descriptor["id"] = profile_id
         for field in ("calibration_engine", "collector", "certifier"):
-            del descriptor["resources"][field]
+            descriptor["resources"].pop(field, None)
         descriptor_bytes = (
             json.dumps(descriptor, indent=2, sort_keys=True) + "\n"
         ).encode("utf-8")
@@ -565,7 +569,7 @@ class SuiteFixture:
                 encoding="utf-8",
             )
         for name in ("calibration.py", "collect.py", "certify.py"):
-            (destination / name).unlink()
+            (destination / name).unlink(missing_ok=True)
         return destination
 
     def align_builtin_profile_authority(self) -> None:
@@ -3398,13 +3402,23 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.fixture = SuiteFixture(Path(self.temporary.name))
         self.fixture.configure_holdout()
-        self.payload = self.fixture.holdout_plan_payload()
-        self.plan_path = self.fixture.save_holdout_plan(self.payload)
         self.suite = load_suite(self.fixture.manifest_path)
         self.provider = self.fixture.provider()
+        seed_runner = self.production_runner(self.runner(production=False))
+        runtime = seed_runner._load_comparator_runtime()
+        self.payload = self.fixture.holdout_plan_payload()
+        self.payload["comparator_release_sha256"] = runtime.release_summary[
+            "release_sha256"
+        ]
+        self.payload["comparator_calibration_evidence_sha256"] = (
+            runtime.certification.evidence_sha256
+        )
+        self.plan_path = self.fixture.save_holdout_plan(self.payload)
+        seed_runner.close()
 
-    def runner(self, suite=None) -> EvalRunner:
-        return EvalRunner(suite or self.suite, self.provider, self.provider)
+    def runner(self, suite=None, *, production: bool = True) -> EvalRunner:
+        runner = EvalRunner(suite or self.suite, self.provider, self.provider)
+        return self.production_runner(runner) if production else runner
 
     def production_runner(
         self,
@@ -3412,7 +3426,7 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
         *,
         bypass_generator_authority: bool = True,
     ) -> EvalRunner:
-        runner = runner or self.runner()
+        runner = runner or self.runner(production=False)
         runtime = runner._load_comparator_runtime()
         release = copy.deepcopy(runtime.bundle.release)
         release["test_release"] = False
@@ -3475,7 +3489,10 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
             self.fixture.codex_protocol_lock,
             agent_handler=forbidden_agent,
         )
-        runner = EvalRunner(suite, provider, self.provider)
+        runner = self.production_runner(
+            EvalRunner(suite, provider, self.provider),
+            bypass_generator_authority=False,
+        )
         output = Path(self.temporary.name) / "must-not-exist"
 
         with self.assertRaisesRegex(
@@ -3498,7 +3515,7 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
         self.fixture.save_manifest()
         suite = load_suite(self.fixture.manifest_path)
         provider = self.fixture.provider()
-        runner = EvalRunner(suite, provider, provider)
+        runner = self.production_runner(EvalRunner(suite, provider, provider))
         output = Path(self.temporary.name) / "fake-holdout-must-not-exist"
 
         with self.assertRaisesRegex(
@@ -3838,7 +3855,7 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
         original_variant["git_ref"] = self.fixture.treatment_commit
         self.fixture.save_manifest()
         same_suite = load_suite(self.fixture.manifest_path)
-        same_runner = self.runner(same_suite)
+        same_runner = self.runner(same_suite, production=False)
         same_release = copy.deepcopy(runtime.bundle.release)
         same_release["runtime_adapter"]["frozen_original_commit"] = (
             self.fixture.treatment_commit
@@ -3847,7 +3864,12 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
             runtime,
             bundle=replace(runtime.bundle, release=same_release),
         )
-        with self.assertRaisesRegex(RunnerError, "must differ"):
+        with (
+            patch.object(
+                same_runner, "_assert_generator_release_authority", return_value=None
+            ),
+            self.assertRaisesRegex(RunnerError, "must differ"),
+        ):
             same_runner.preflight(self.selection())
         self.assertEqual(self.provider.agent_requests, [])
         self.assertEqual(self.provider.comparator_requests, [])
@@ -4353,7 +4375,7 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
     def test_prepare_holdout_plan_requires_valid_live_calibration(self) -> None:
         output = self.fixture.root / "uncalibrated-plan.json"
         with self.assertRaisesRegex(RunnerError, "test comparator release"):
-            self.runner().prepare_holdout_plan(
+            self.runner(production=False).prepare_holdout_plan(
                 output_path=output,
                 plan_id="uncalibrated-plan-v1",
                 reviewers=("reviewer-a",),
@@ -4472,14 +4494,15 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
             preflight["holdout_plan"]["comparator_release_sha256"],
             preflight["comparator"]["release_sha256"],
         )
-        self.assertIsNone(
-            preflight["holdout_plan"]["comparator_calibration_evidence_sha256"]
+        self.assertEqual(
+            preflight["holdout_plan"]["comparator_calibration_evidence_sha256"],
+            "c" * 64,
         )
         self.assertEqual(
             preflight["holdout_plan"]["manifest_bound_models"],
             {"generator": "fake-model-v1", "comparator": "fake-sonnet-v2"},
         )
-        self.assertTrue(
+        self.assertFalse(
             preflight["holdout_plan"]["test_release_without_live_certification"]
         )
         self.assertFalse(
@@ -4524,8 +4547,15 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
         self.fixture.manifest["cases"].append(extra_case)
         self.fixture.save_manifest()
         suite = load_suite(self.fixture.manifest_path)
+        plan_payload = self.fixture.holdout_plan_payload()
+        plan_payload["comparator_release_sha256"] = self.payload[
+            "comparator_release_sha256"
+        ]
+        plan_payload["comparator_calibration_evidence_sha256"] = self.payload[
+            "comparator_calibration_evidence_sha256"
+        ]
         plan_path = self.fixture.save_holdout_plan(
-            self.fixture.holdout_plan_payload(), name="seventeen-case-plan.json"
+            plan_payload, name="seventeen-case-plan.json"
         )
         runner = self.runner(suite)
 
@@ -4590,15 +4620,16 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
     def test_production_holdout_requires_live_certification_evidence(self) -> None:
         cases, comparisons, sources, case_records = self.binding_inputs()
         runner = self.runner()
-        runtime = SimpleNamespace(
-            release_summary={
-                "release_sha256": self.payload["comparator_release_sha256"]
-            },
-            certification=SimpleNamespace(valid=False, evidence_sha256=None),
-            bundle=SimpleNamespace(release={"test_release": False}),
-            protocol_locks_valid=True,
+        runtime = runner._load_comparator_runtime()
+        invalid_certification = replace(
+            runtime.certification,
+            valid=False,
+            evidence_sha256=None,
         )
-        with patch.object(runner, "_load_comparator_runtime", return_value=runtime):
+        invalid_runtime = replace(runtime, certification=invalid_certification)
+        with patch.object(
+            runner, "_load_comparator_runtime", return_value=invalid_runtime
+        ):
             with self.assertRaisesRegex(RunnerError, "valid live comparator"):
                 runner._bind_holdout_plan(
                     self.selection(),
@@ -4608,10 +4639,11 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
                     case_records,
                 )
 
-        runtime.protocol_locks_valid = False
-        runtime.certification = SimpleNamespace(valid=True, evidence_sha256="a" * 64)
-        with patch.object(runner, "_load_comparator_runtime", return_value=runtime):
-            with self.assertRaisesRegex(RunnerError, "valid live comparator"):
+        invalid_runtime = replace(runtime, external_bindings_validated=False)
+        with patch.object(
+            runner, "_load_comparator_runtime", return_value=invalid_runtime
+        ):
+            with self.assertRaisesRegex(RunnerError, "external release bindings"):
                 runner._bind_holdout_plan(
                     self.selection(),
                     cases,
@@ -5035,6 +5067,30 @@ class ManifestValidationTests(unittest.TestCase):
                 )
         self.assertFalse((self.fixture.root / "local-holdout.json").exists())
 
+    def test_test_authority_profile_cannot_access_holdout(self) -> None:
+        self.fixture.use_v3_judged(
+            {"kind": "builtin", "id": "plain-language-revision-v1"}
+        )
+        self.fixture.configure_holdout(skills=("demo",))
+        self.fixture.align_builtin_profile_authority()
+        suite = load_suite(self.fixture.manifest_path)
+        provider = self.fixture.provider()
+        output = self.fixture.root / "test-authority-holdout.json"
+        with EvalRunner(suite, provider, provider) as runner:
+            with self.assertRaisesRegex(
+                RunnerError, "not authorized for production holdouts"
+            ):
+                runner.prepare_holdout_plan(
+                    output_path=output,
+                    plan_id="test-authority-holdout",
+                    reviewers=("reviewer-a", "reviewer-b"),
+                    freeze_record="freeze-record",
+                    seal_record="seal-record",
+                )
+        self.assertFalse(output.exists())
+        self.assertEqual(provider.agent_requests, [])
+        self.assertEqual(provider.comparator_requests, [])
+
     def test_required_tools_and_worktree_source_ref_are_mandatory(self) -> None:
         del self.fixture.manifest["cases"][0]["verifier"]["required_tools"]
         self.fixture.save_manifest()
@@ -5209,6 +5265,147 @@ class SchemaV3RunnerTests(unittest.TestCase):
         )
         self.assertTrue(comparator["profile_locks_valid"])
         self.assertTrue(comparator["protocol_locks_valid"])
+
+    def test_plain_language_profile_executes_non_engineering_judgment(self) -> None:
+        self.fixture.create_data_profile(
+            "profiles/plain-language",
+            profile_id="suite-local-plain-language-v1",
+            source_directory="plain_language_calibration",
+        )
+        self.fixture.use_v3_judged(
+            {"kind": "suite_local", "path": "profiles/plain-language"}
+        )
+        case = self.fixture.manifest["cases"][0]
+        case["prompt_file"] = "editorial-prompt.md"
+        (self.fixture.suite_root / "editorial-prompt.md").write_text(
+            "Rewrite the public notice in plain language without changing its facts.\n",
+            encoding="utf-8",
+        )
+        case["comparator_contract"]["requirements"][0]["text"] = (
+            "The revision must create a non-empty plain-language notice in the evaluated workspace."
+        )
+        case["comparator_contract"]["qualitative_bases"] = {
+            "reader_clarity": {
+                "kind": "reader-comprehension",
+                "detail": "Compare whether a general reader can identify the closure and reopening directly from the revised notice.",
+            }
+        }
+        self.fixture.save_manifest()
+        suite = load_suite(self.fixture.manifest_path)
+
+        clear_notice = "The office is closed Friday and reopens Monday."
+
+        def agent(request):
+            treatment = request.skill_snapshot is not None
+            notice = (
+                clear_notice
+                if treatment
+                else "Friday has the office in a closed state, with reopening occurring Monday."
+            )
+            (request.workspace / "answer.txt").write_text(
+                "verified\n", encoding="utf-8"
+            )
+            (request.workspace / "notice.txt").write_text(
+                notice + "\n", encoding="utf-8"
+            )
+            return {
+                "final_output": "revision complete",
+                "actual_models": [request.model],
+                "cost_usd": 0.25,
+                "tokens": {"input_tokens": 3, "output_tokens": 2},
+            }
+
+        def compare(request):
+            requirement = request.pair["contract"]["requirements"][0]
+            requirement_id = requirement["id"]
+
+            def evidence(anchor):
+                quote = requirement["text"]
+                return {
+                    "artifact": "contract",
+                    "path": f"contract/requirements/{requirement_id}",
+                    "line_start": 1,
+                    "line_end": 1,
+                    "quote": quote,
+                    "semantic_anchor": anchor,
+                    "observation": f"{quote} provides the controlled basis; {anchor} is the typed decision.",
+                }
+
+            treatment_side = "A" if request.order == "BA" else "B"
+            criteria = {}
+            for criterion in request.runtime.bundle.semantic_contract["criterion_ids"]:
+                winner = treatment_side if criterion == "reader_clarity" else "tie"
+                criterion_evidence = evidence(f"criterion:{criterion}:{winner}")
+                if criterion == "reader_clarity":
+                    criterion_evidence = {
+                        "artifact": treatment_side,
+                        "path": "notice.txt",
+                        "line_start": 1,
+                        "line_end": 1,
+                        "quote": clear_notice,
+                        "semantic_anchor": f"criterion:{criterion}:{winner}",
+                        "observation": f"{clear_notice} directly names the closure and reopening; criterion:{criterion}:{winner} is the typed decision.",
+                    }
+                criteria[criterion] = {
+                    "winner": winner,
+                    "evidence": criterion_evidence,
+                }
+            return {
+                "structured_output": {
+                    "checks": {
+                        side: [
+                            {
+                                "requirement_id": requirement_id,
+                                "status": "satisfied",
+                                "evidence": evidence(
+                                    f"requirement:{requirement_id}:satisfied"
+                                ),
+                            }
+                        ]
+                        for side in ("A", "B")
+                    },
+                    "admissibility": {
+                        side: {"decision": "eligible", "violation_ids": []}
+                        for side in ("A", "B")
+                    },
+                    "criteria": criteria,
+                },
+                "actual_models": ["fake-sonnet-v2.0"],
+                "cost_usd": 0.1,
+                "tokens": {"input_tokens": 4, "output_tokens": 1},
+            }
+
+        provider = FakeProvider(
+            agent_handler=agent,
+            comparator_handler=compare,
+        )
+        output = self.fixture.root / "plain-language-result"
+        with EvalRunner(suite, provider, provider) as runner:
+            result = runner.run(
+                RunSelection(comparison_ids=("without-current",)), output_dir=output
+            )
+
+        self.assertTrue(result["passed"], result)
+        self.assertEqual(suite.comparator_profile.kind, "suite_local")
+        self.assertIsNone(suite.comparator_profile.resources.authority_binding)
+        self.assertEqual(len(provider.comparator_requests), 6)
+        self.assertEqual(
+            {
+                tuple(request.runtime.bundle.semantic_contract["criterion_ids"])
+                for request in provider.comparator_requests
+            },
+            {
+                (
+                    "factual_fidelity",
+                    "reader_clarity",
+                    "audience_fit",
+                    "concision",
+                )
+            },
+        )
+        self.assertEqual(
+            {pair["final_winner"] for pair in result["pairs"]}, {"treatment"}
+        )
 
     def test_builtin_certification_root_rejects_symlink_before_dispatch(self) -> None:
         self.fixture.use_v3_judged()

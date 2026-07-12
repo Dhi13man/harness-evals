@@ -1096,6 +1096,7 @@ class ComparatorRuntime:
     profile_id: str | None = None
     profile_descriptor_sha256: str | None = None
     profile_authority_registry_sha256: str | None = None
+    profile_authority_scope: str | None = None
     external_bindings_validated: bool = True
     _profile_context: Any = field(default=None, repr=False, compare=False)
 
@@ -1149,6 +1150,13 @@ class ComparatorRuntime:
         profile = resolve_builtin_profile(profile_id)
         if profile.authority_binding is None:
             raise CalibrationError("built-in comparator profile omitted authority")
+        if (
+            not use_test_release
+            and profile.authority_binding.authority_scope != "production"
+        ):
+            raise CalibrationError(
+                "built-in comparator profile is not authorized for production"
+            )
         return cls._load_profile_resources(
             profile,
             external_suite_root=external_suite_root,
@@ -1285,6 +1293,11 @@ class ComparatorRuntime:
                     if profile.authority_binding is not None
                     else None
                 ),
+                profile_authority_scope=(
+                    profile.authority_binding.authority_scope
+                    if profile.authority_binding is not None
+                    else None
+                ),
                 external_bindings_validated=external_bindings_validated,
                 _profile_context=profile_context,
             )
@@ -1310,15 +1323,40 @@ class ComparatorRuntime:
     def live_calibration_valid(self) -> bool:
         return self.certification.valid
 
-    def require_live_calibration(self) -> None:
+    @property
+    def production_authority_valid(self) -> bool:
+        if self.bundle.release["test_release"] or not self.external_bindings_validated:
+            return False
+        if self.profile_id is None:
+            return True
+        return (
+            self.profile_authority_registry_sha256 is not None
+            and self.profile_authority_scope == "production"
+        )
+
+    def require_production_authority(self) -> None:
+        if (
+            self.profile_id is not None
+            and self.profile_authority_registry_sha256 is None
+        ):
+            raise CalibrationError(
+                "production holdouts require an authority-bound comparator profile"
+            )
+        if self.profile_id is not None and self.profile_authority_scope != "production":
+            raise CalibrationError(
+                "comparator profile is not authorized for production holdouts"
+            )
+        if self.bundle.release["test_release"]:
+            raise CalibrationError(
+                "test comparator release cannot access production holdouts"
+            )
         if not self.external_bindings_validated:
             raise CalibrationError(
                 "comparator runtime external release bindings are not validated"
             )
-        if self.bundle.release["test_release"]:
-            raise CalibrationError(
-                "test comparator release cannot authorize production judged runs"
-            )
+
+    def require_live_calibration(self) -> None:
+        self.require_production_authority()
         if not self.certification.valid:
             detail = self.certification.error or "certification is absent"
             raise CalibrationError(f"comparator live calibration is invalid: {detail}")
