@@ -5542,6 +5542,75 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
         self.assertEqual(injected_comparator.comparator_requests, [])
         self.assertFalse(output.exists())
 
+    def test_schema_v6_rejects_provider_authority_drift_before_dispatch(self) -> None:
+        self.fixture.manifest["schema_version"] = 6
+        self.fixture.manifest["evaluation_mode"] = "judged"
+        self.fixture.manifest["comparator_profile"] = {
+            "kind": "builtin",
+            "id": "software-engineering-v2.3",
+        }
+        self.fixture.manifest["shared_verifier_dir"] = None
+        self.fixture.manifest["holdout"] = {"comparison_ids": list(self.comparison_ids)}
+        self.fixture._use_adapter(self.fixture.manifest["provider"])
+        self.fixture._use_adapter(self.fixture.manifest["comparator"])
+        for case in self.fixture.manifest["cases"]:
+            case["bundle_source"] = f"skills/{case['skill']}"
+        self.fixture.save_manifest()
+
+        mutations = (
+            (
+                "generator config",
+                "generator provider binding authority drifted",
+                lambda suite, _generator, _comparator, _runner: object.__setattr__(
+                    suite.provider, "model", "mutated-generator-model"
+                ),
+            ),
+            (
+                "comparator config",
+                "comparator provider authority binding drifted",
+                lambda suite, _generator, _comparator, _runner: object.__setattr__(
+                    suite.comparator, "model", "mutated-comparator-model"
+                ),
+            ),
+            (
+                "generator runtime identity",
+                "generator provider identity drifted",
+                lambda _suite, generator, _comparator, _runner: setattr(
+                    generator, "_version", "mutated-generator-version"
+                ),
+            ),
+            (
+                "comparator runtime identity",
+                "comparator provider authority binding drifted",
+                lambda _suite, _generator, comparator, _runner: setattr(
+                    comparator, "_version", "mutated-comparator-version"
+                ),
+            ),
+            (
+                "comparator instance",
+                "comparator provider instance drifted",
+                lambda _suite, _generator, _comparator, runner: setattr(
+                    runner, "comparator_provider", self.fixture.provider()
+                ),
+            ),
+        )
+        for label, expected, mutate in mutations:
+            with self.subTest(label=label):
+                suite = load_suite(self.fixture.manifest_path)
+                generator = self.fixture.provider()
+                comparator = self.fixture.provider()
+                runner = EvalRunner(suite, generator, comparator)
+                self.addCleanup(runner.close)
+                mutate(suite, generator, comparator, runner)
+
+                with self.assertRaisesRegex(RunnerError, expected):
+                    runner.preflight(
+                        RunSelection(comparison_ids=(self.comparison_ids[0],))
+                    )
+
+                self.assertEqual(generator.agent_requests, [])
+                self.assertEqual(comparator.comparator_requests, [])
+
     def test_schema_v5_objective_holdout_seals_policy_without_comparator(self) -> None:
         suite = self.objective_v5_suite()
         runner = EvalRunner(suite)

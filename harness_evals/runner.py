@@ -2557,6 +2557,10 @@ class EvalRunner:
             if self._comparator_authority_binding is not None:
                 raise RunnerError("comparator authority persisted without a provider")
             return
+        if self.comparator_provider is not self._comparator_provider_instance:
+            raise RunnerError(
+                "comparator provider instance drifted after initialization"
+            )
         if self.suite.comparator is None or self._comparator_authority_binding is None:
             raise RunnerError("comparator provider omitted its authority binding")
         observed = _provider_authority_binding(
