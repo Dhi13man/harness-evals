@@ -82,28 +82,28 @@ The root [suite.json](suite.json) is a complete repository-local reference suite
 
 | Component | Purpose |
 | --- | --- |
-| `evaluation_mode` | Selects comparator-judged or objective-verifier-only evaluation in schema v3 through v5. |
-| `provider` | Generates a change in an isolated fixture workspace. |
-| `comparator` | Judges eligible pairs using the locked blinded protocol. |
-| `comparator_profile` | Selects the versioned comparator contract and resources for schema-v3 through schema-v5 judged suites. |
+| `evaluation_mode` | Selects comparator-judged or objective-verifier-only evaluation in schema v3 or newer. |
+| `provider` | Generates a change in an isolated fixture workspace; schema v6 selects a reviewed `adapter`. |
+| `comparator` | Judges eligible pairs using the locked blinded protocol; schema v6 selects a reviewed `adapter`. |
+| `comparator_profile` | Selects the versioned comparator contract and resources for schema-v3-or-newer judged suites. |
 | `shared_verifier_dir` | In schema v4 or newer, selects one contained read-only verifier resource directory or explicitly disables shared resources with `null`. |
-| `holdout` | In schema v5, selects the ordered comparison IDs authorized for release evaluation. |
+| `holdout` | In schema v5 or newer, selects the ordered comparison IDs authorized for release evaluation. |
 | `variants` | Bind absent, immutable Git-ref, or committed-worktree instruction bundles. |
 | `comparisons` | Define control/treatment roles, exactly three repetitions, and AB/BA order. |
 | `cases` | Bind a prompt, fixture, verifier, bundle ID, schema-v4-or-newer `bundle_source`, explicit context, expectations, and, for judged suites, a comparator contract. |
 
 The executable parser in [harness_evals/manifest.py](harness_evals/manifest.py) is authoritative. [suite.schema.json](suite.schema.json) is the editor and interoperability contract; changes must keep both in exact behavioral parity.
 
-To evaluate bundles in another repository, copy the manifest, set `repository_root`, point worktree variants at that repository, replace Git refs with commits reachable there, and update every case's bundle ID, bundle source, and explicit context files. Suite files and shared verifier resources may use any contained layout; they do not need to mirror the evaluated repository. Schema-v2 through schema-v4 holdouts retain the release-owned `original` baseline adapter. Schema-v5 holdouts bind every selected source directly in a newly reviewed plan instead of deriving source authority from the comparator release.
+To evaluate bundles in another repository, copy the manifest, set `repository_root`, point worktree variants at that repository, replace Git refs with commits reachable there, and update every case's bundle ID, bundle source, and explicit context files. Suite files and shared verifier resources may use any contained layout; they do not need to mirror the evaluated repository. Schema-v2 through schema-v4 holdouts retain the release-owned `original` baseline adapter. Schema-v5-or-newer holdouts bind every selected source directly in a newly reviewed plan instead of deriving source authority from the comparator release.
 
 ### Evaluation Modes
 
-Schema v2 remains supported without changing existing manifest bytes, manifest hashes, or result field shapes and selects the current software comparator through its compatibility path. Schema v3 adds an explicit `evaluation_mode`; schema v4 adds explicit layout paths; schema v5 adds suite-owned release comparison selection and generic sealed source authority. Schema-v2 and schema-v3 compatibility paths derive each bundle from `skills/<skill>` and discover `cases/testing/_shared` when that legacy directory exists. Comparator release and certification hashes still change when their locked code or resources change.
+Schema v2 remains supported without changing existing manifest bytes, manifest hashes, or result field shapes and selects the current software comparator through its compatibility path. Schema v3 adds an explicit `evaluation_mode`; schema v4 adds explicit layout paths; schema v5 adds suite-owned release comparison selection and generic sealed source authority; schema v6 replaces provider `kind` values with reviewed adapter IDs and seals provider capability authority. Schema-v2 and schema-v3 compatibility paths derive each bundle from `skills/<skill>` and discover `cases/testing/_shared` when that legacy directory exists. Comparator release and certification hashes still change when their locked code or resources change.
 
 - `judged` requires both `comparator` and `comparator_profile`, and every case requires `comparator_contract`.
 - `objective_only` forbids `comparator`, `comparator_profile`, and every case-level `comparator_contract`. The runner constructs no comparator provider or runtime, creates no comparator spend ledger, selects the sole verifier-passing arm, and records equal verifier outcomes as `tie` under `verifier-pass-v1`.
 
-Objective-only schema-v3 and schema-v4 execution remains diagnostic. Schema v5 may prepare and consume a production holdout without constructing a comparator: plan v3 seals the canonical `verifier-pass-v1` acceptance policy, and the normal source, provider, review, one-shot, case-integrity, and aggregate gates still apply.
+Objective-only schema-v3 and schema-v4 execution remains diagnostic. Schema v5 or newer may prepare and consume a production holdout without constructing a comparator: the plan seals the canonical `verifier-pass-v1` acceptance policy, and the normal source, provider, review, one-shot, case-integrity, and aggregate gates still apply.
 
 ### Layout Paths
 
@@ -128,15 +128,15 @@ Schema v5 declares release comparisons in manifest order:
 
 The selected comparison IDs and their control and treatment variant IDs are suite-owned; no reserved names are required. Release comparisons retain three repetitions and `ab_ba` ordering. Every selected skill still requires at least eight unique holdout task fingerprints.
 
-Newly prepared plans use holdout-plan schema v3. Each sorted `source_bindings[]` entry seals the variant ID, variant kind, nullable source commit, and an exact sorted case-to-fingerprint map. A `without_skill` binding uses the canonical empty-source digest. Git-ref and worktree fingerprints share one versioned domain-separated preimage containing the bundle locator, sorted relative paths, file bytes, executable bits, and declared context paths and bytes. Equal evaluated sources in either arm fail before dispatch even when their commit IDs differ.
+Schema-v5 suites prepare holdout-plan schema v3; schema-v6 suites prepare schema v4. Both versions seal generic source authority. Each sorted `source_bindings[]` entry seals the variant ID, variant kind, nullable source commit, and an exact sorted case-to-fingerprint map. A `without_skill` binding uses the canonical empty-source digest. Git-ref and worktree fingerprints share one versioned domain-separated preimage containing the bundle locator, sorted relative paths, file bytes, executable bits, and declared context paths and bytes. Equal evaluated sources in either arm fail before dispatch even when their commit IDs differ.
 
-Judged plan-v3 authority seals the registered comparator profile descriptor, authority registry, release, and live certification evidence. Objective-only plan-v3 authority forbids comparator fields and seals the canonical verifier acceptance policy instead. Source authority is identical in both modes.
+Judged plans seal the registered comparator profile descriptor, authority registry, release, and live certification evidence. Objective-only plans forbid comparator fields and seal the canonical verifier acceptance policy instead. Source authority is identical in both modes. Plan v4 additionally seals role-specific generator and comparator adapter bindings over the reviewed capability digest, contract revision, authority scope, normalized non-secret configuration, runtime provenance, and complete binding digest.
 
-To migrate an unconsumed suite, retain its evaluation mode and schema-v4 layout fields, set `schema_version` to `5`, add `holdout.comparison_ids` in manifest comparison order, validate the suite, and prepare a new external plan. Do not rewrite a reviewed or consumed plan. Holdout-plan schema v2 remains readable only for schema-v2 through schema-v4 manifests that preserve the legacy `candidate`, `original`, and `no-skill` release shape; it cannot authorize a schema-v5 suite.
+To adopt generic source authority, migrate an unconsumed suite to schema v5, add `holdout.comparison_ids` in manifest comparison order, validate the suite, and prepare a new external plan. To adopt provider capability authority, migrate that suite to schema v6 and replace each provider `kind` with its reviewed adapter ID: `claude` becomes `claude-cli`, `codex` becomes `codex-app-server`, and `fake` becomes `deterministic-fake`. Validate again and prepare a new plan v4. Do not rewrite a reviewed or consumed plan. Plan v2 remains readable only for compatible schema-v2 through schema-v4 suites; plan v3 remains readable only for compatible schema-v2 through schema-v5 suites and cannot authorize schema v6.
 
 ### Comparator Profiles
 
-A judged schema-v3 through schema-v5 suite selects either a registered built-in profile or a contained suite-local data profile:
+A judged schema-v3-or-newer suite selects either a registered built-in profile or a contained suite-local data profile:
 
 ```json
 {
@@ -190,7 +190,9 @@ Case oracles must judge observable requirements, resist implementation-name and 
 
 ## Providers
 
-Built-in harness integrations conform to the `EvalProvider` contract in [harness_evals/providers.py](harness_evals/providers.py). The strict manifest parser and runner factory explicitly register supported provider kinds; adding another provider currently requires a reviewed code and schema contribution. The Claude adapter is release-authoritative when its exact executable, runtime, model, isolation properties, and live comparator certification satisfy the release locks. The optional Codex app-server adapter is diagnostic: it validates a pinned standalone CLI and protocol bundle, disables unrelated bundled skills, and records subscription-quota metadata, but cannot satisfy the current generator-authority gate for a release holdout. Neither provider determines which skill domains a suite may evaluate.
+Built-in harness integrations conform to the `EvalProvider` contract in [harness_evals/providers.py](harness_evals/providers.py). Schema v6 selects adapters from the immutable reviewed registry in [harness_evals/provider_capabilities.py](harness_evals/provider_capabilities.py); arbitrary manifest-supplied imports and capability declarations are not supported. Each registry entry fixes its roles, contract revision, concurrency, sandbox, authority scope, billing evidence, provenance fields, and artifact outputs, and its canonical digest is included in the locked release inputs.
+
+`claude-cli` supports generation and comparison with production authority. `codex-app-server` is a serialized diagnostic generation adapter with subscription-quota provenance. `deterministic-fake` supports generation and comparison only under test authority. A production schema-v6 holdout additionally requires manifest-built, non-injected Claude generator and comparator instances, exact executable and runtime bindings, sealed plan-v4 authority, and live comparator certification. Provider names, injected instances, suite fields, and provider results cannot elevate their own authority. Neither provider determines which skill domains a suite may evaluate.
 
 New provider contributions must preserve dispatch journaling, source and request bindings, cleanup guarantees, credential isolation, cost or quota provenance, deterministic test doubles, and fail-closed authority checks.
 

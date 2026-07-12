@@ -10,16 +10,20 @@ All notable changes to Harness Evals are documented in this file. The format fol
 - Added installed-wheel coverage for external suites whose bundles, cases, and verifier resources use independent layouts.
 - Added schema v5 with suite-owned ordered release comparisons and holdout-plan schema v3 with generic per-variant source bindings.
 - Added production objective-only holdouts that seal the canonical verifier acceptance policy without constructing a comparator.
+- Added schema v6 with reviewed provider adapter IDs, immutable capability declarations, and canonical capability digests.
+- Added holdout-plan schema v4 with role-specific generator and comparator authority bindings.
 
 ### Changed
 
 - Separated source authority from comparator judgment authority. Judged plans bind profile, release, and certification evidence; objective plans bind verifier-policy evidence.
 - Limited holdout-plan schema v2 to the legacy schema-v2 through schema-v4 candidate/original adapter without rewriting historical plan bytes.
+- Routed provider construction, scheduling, sandbox selection, billing evidence, and provenance through reviewed adapter capabilities while preserving schema-v2 through schema-v5 compatibility.
 
 ### Security
 
 - Added literal Git path handling, bounded source enumeration, Git/worktree snapshot parity, runtime shared-path revalidation, verifier-only source separation, and read-only configured shared mounts.
 - Added domain-separated source fingerprints over bundle locators, paths, bytes, executable modes, and context files; equal evaluated arms, source drift, mode confusion, and authority substitution fail before dispatch.
+- Bound production provider authority to reviewed capability, configuration, runtime provenance, executable identity, and non-injected provider instances; drift and instance substitution fail before dispatch or release.
 
 ## [0.2.0] - 2026-07-12
 
