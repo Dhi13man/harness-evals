@@ -53,7 +53,7 @@ cd harness-evals
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e .
+python -m pip install -e ".[test]"
 python -m unittest discover -s tests -v
 python -m unittest discover -s harness_evals/comparator_calibration/tests -v
 python cases/software/calibrate.py

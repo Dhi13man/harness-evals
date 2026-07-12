@@ -15,6 +15,7 @@ from typing import Any, Callable
 from unittest.mock import patch
 
 import jsonschema
+from referencing import Registry, Resource
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -482,17 +483,17 @@ class CorpusTests(CalibrationTestCase):
         self.assertIsNone(
             jsonschema.validate(self.bundle.manifest, self.bundle.manifest_schema)
         )
-        resolver = jsonschema.RefResolver(
-            base_uri=ROOT.as_uri() + "/",
-            referrer=self.bundle.evidence_schema,
-            store={
-                "response.schema.json": self.bundle.response_schema,
-                (ROOT / "response.schema.json").as_uri(): self.bundle.response_schema,
-            },
+        registry = Registry().with_resources(
+            [
+                (
+                    "response.schema.json",
+                    Resource.from_contents(self.bundle.response_schema),
+                )
+            ]
         )
         self.assertIsNone(
             jsonschema.Draft202012Validator(
-                self.bundle.evidence_schema, resolver=resolver
+                self.bundle.evidence_schema, registry=registry
             ).validate(build_evidence(self.bundle))
         )
 
