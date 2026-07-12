@@ -112,6 +112,30 @@ class HoldoutSourceBinding:
 
 
 @dataclass(frozen=True)
+class HoldoutAdapterBinding:
+    adapter_id: str
+    authority_scope: str
+    binding_sha256: str
+    capability_sha256: str
+    config_sha256: str
+    contract_revision: int
+    role: str
+    runtime_provenance_sha256: str
+
+    def as_json(self) -> dict[str, Any]:
+        return {
+            "adapter_id": self.adapter_id,
+            "authority_scope": self.authority_scope,
+            "binding_sha256": self.binding_sha256,
+            "capability_sha256": self.capability_sha256,
+            "config_sha256": self.config_sha256,
+            "contract_revision": self.contract_revision,
+            "role": self.role,
+            "runtime_provenance_sha256": self.runtime_provenance_sha256,
+        }
+
+
+@dataclass(frozen=True)
 class HoldoutPlan:
     path: Path
     raw_bytes: bytes
@@ -128,6 +152,8 @@ class HoldoutPlan:
     objective_acceptance_policy_id: str | None
     objective_acceptance_policy_sha256: str | None
     generator_provider: HoldoutProviderBinding
+    generator_adapter_binding: HoldoutAdapterBinding | None
+    comparator_adapter_binding: HoldoutAdapterBinding | None
     candidate_commit: str | None
     original_commit: str | None
     source_bindings: tuple[HoldoutSourceBinding, ...]
@@ -180,6 +206,15 @@ class HoldoutPlan:
             evidence["source_bindings"] = [
                 binding.as_json() for binding in self.source_bindings
             ]
+            if self.schema_version >= 4:
+                assert self.generator_adapter_binding is not None
+                evidence["generator_adapter_binding"] = (
+                    self.generator_adapter_binding.as_json()
+                )
+                if self.comparator_adapter_binding is not None:
+                    evidence["comparator_adapter_binding"] = (
+                        self.comparator_adapter_binding.as_json()
+                    )
             if self.evaluation_mode == "judged":
                 evidence["comparator_release_sha256"] = self.comparator_release_sha256
                 evidence["comparator_calibration_evidence_sha256"] = (
@@ -600,6 +635,54 @@ def _parse_source_bindings(
     return tuple(bindings)
 
 
+def _parse_adapter_binding(
+    value: Any, location: str, *, role: str
+) -> HoldoutAdapterBinding:
+    fields = {
+        "adapter_id",
+        "authority_scope",
+        "binding_sha256",
+        "capability_sha256",
+        "config_sha256",
+        "contract_revision",
+        "role",
+        "runtime_provenance_sha256",
+    }
+    item = _object(value, location, required=fields, allowed=fields)
+    observed_role = _string(item["role"], f"{location}.role")
+    if observed_role != role:
+        raise HoldoutPlanError(f"{location}.role must be {role!r}")
+    authority_scope = _string(item["authority_scope"], f"{location}.authority_scope")
+    if authority_scope not in {"diagnostic", "production", "test"}:
+        raise HoldoutPlanError(f"{location}.authority_scope is unsupported")
+    return HoldoutAdapterBinding(
+        adapter_id=_string(
+            item["adapter_id"], f"{location}.adapter_id", pattern=_IDENTIFIER
+        ),
+        authority_scope=authority_scope,
+        binding_sha256=_string(
+            item["binding_sha256"], f"{location}.binding_sha256", pattern=_SHA256
+        ),
+        capability_sha256=_string(
+            item["capability_sha256"],
+            f"{location}.capability_sha256",
+            pattern=_SHA256,
+        ),
+        config_sha256=_string(
+            item["config_sha256"], f"{location}.config_sha256", pattern=_SHA256
+        ),
+        contract_revision=_integer(
+            item["contract_revision"], f"{location}.contract_revision", minimum=1
+        ),
+        role=observed_role,
+        runtime_provenance_sha256=_string(
+            item["runtime_provenance_sha256"],
+            f"{location}.runtime_provenance_sha256",
+            pattern=_SHA256,
+        ),
+    )
+
+
 def load_holdout_plan(path: Path) -> HoldoutPlan:
     """Load a sealed, externally supplied trusted-review attestation."""
 
@@ -644,7 +727,7 @@ def load_holdout_plan(path: Path) -> HoldoutPlan:
             "comparator_release_sha256",
             "comparator_calibration_evidence_sha256",
         }
-    elif schema_version == 3:
+    elif schema_version in {3, 4}:
         evaluation_mode = _string(raw.get("evaluation_mode"), "evaluation_mode")
         if evaluation_mode == "judged":
             version_fields = {
@@ -667,8 +750,12 @@ def load_holdout_plan(path: Path) -> HoldoutPlan:
             raise HoldoutPlanError(
                 "evaluation_mode must be 'judged' or 'objective_only'"
             )
+        if schema_version == 4:
+            version_fields.add("generator_adapter_binding")
+            if evaluation_mode == "judged":
+                version_fields.add("comparator_adapter_binding")
     else:
-        raise HoldoutPlanError("schema_version must be 2 or 3")
+        raise HoldoutPlanError("schema_version must be 2, 3, or 4")
     fields = common_fields | version_fields
     data = _object(raw, "holdout plan", required=fields, allowed=fields)
     if _string(data["status"], "status") != "sealed":
@@ -710,7 +797,7 @@ def load_holdout_plan(path: Path) -> HoldoutPlan:
             comparison_profile=comparison_profile,
             cases=cases,
         )
-        if schema_version == 3
+        if schema_version >= 3
         else ()
     )
 
@@ -770,7 +857,7 @@ def load_holdout_plan(path: Path) -> HoldoutPlan:
                     "comparator_calibration_evidence_sha256",
                     pattern=_SHA256,
                 )
-                if schema_version == 3
+                if schema_version >= 3
                 else _optional_sha256(
                     data["comparator_calibration_evidence_sha256"],
                     "comparator_calibration_evidence_sha256",
@@ -781,7 +868,7 @@ def load_holdout_plan(path: Path) -> HoldoutPlan:
         ),
         comparator_profile_id=(
             _string(data["comparator_profile_id"], "comparator_profile_id")
-            if schema_version == 3 and evaluation_mode == "judged"
+            if schema_version >= 3 and evaluation_mode == "judged"
             else None
         ),
         comparator_profile_descriptor_sha256=(
@@ -790,7 +877,7 @@ def load_holdout_plan(path: Path) -> HoldoutPlan:
                 "comparator_profile_descriptor_sha256",
                 pattern=_SHA256,
             )
-            if schema_version == 3 and evaluation_mode == "judged"
+            if schema_version >= 3 and evaluation_mode == "judged"
             else None
         ),
         comparator_profile_authority_registry_sha256=(
@@ -799,7 +886,7 @@ def load_holdout_plan(path: Path) -> HoldoutPlan:
                 "comparator_profile_authority_registry_sha256",
                 pattern=_SHA256,
             )
-            if schema_version == 3 and evaluation_mode == "judged"
+            if schema_version >= 3 and evaluation_mode == "judged"
             else None
         ),
         objective_acceptance_policy_id=(
@@ -821,6 +908,24 @@ def load_holdout_plan(path: Path) -> HoldoutPlan:
             else None
         ),
         generator_provider=_parse_provider(data["generator_provider"]),
+        generator_adapter_binding=(
+            _parse_adapter_binding(
+                data["generator_adapter_binding"],
+                "generator_adapter_binding",
+                role="generation",
+            )
+            if schema_version == 4
+            else None
+        ),
+        comparator_adapter_binding=(
+            _parse_adapter_binding(
+                data["comparator_adapter_binding"],
+                "comparator_adapter_binding",
+                role="comparison",
+            )
+            if schema_version == 4 and evaluation_mode == "judged"
+            else None
+        ),
         candidate_commit=(
             _string(data["candidate_commit"], "candidate_commit", pattern=_COMMIT)
             if schema_version == 2

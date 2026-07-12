@@ -60,6 +60,7 @@ from .providers import (
     ProviderResult,
     execution_policy_for,
 )
+from .provider_capabilities import capabilities_for
 
 
 MAX_FILE_BYTES = 64 * 1024 * 1024
@@ -944,15 +945,16 @@ class _ExecutableAttestation:
 
 
 def _build_provider(config: ProviderConfig) -> EvalProvider:
-    if config.kind == "claude":
+    adapter_id = config.reviewed_adapter_id
+    if adapter_id == "claude-cli":
         return ClaudeCliProvider(config)
-    if config.kind == "codex":
+    if adapter_id == "codex-app-server":
         from .codex_app_server import CodexAppServerProvider
 
         return CodexAppServerProvider(config)
-    if config.kind == "fake":
+    if adapter_id == "deterministic-fake":
         return FakeProvider()
-    raise RunnerError(f"unsupported provider kind: {config.kind}")
+    raise RunnerError(f"unsupported provider adapter: {adapter_id}")
 
 
 def _provider_execution_policy(provider: EvalProvider) -> dict[str, Any]:
@@ -1120,7 +1122,7 @@ def _codex_provider_binding(
     verify_executable: bool,
 ) -> dict[str, Any]:
     if (
-        config.kind != "codex"
+        config.reviewed_adapter_id != "codex-app-server"
         or config.billing_basis != "chatgpt_subscription"
         or config.max_budget_usd is not None
         or not isinstance(config.executable, str)
@@ -1224,6 +1226,60 @@ def _codex_provider_binding(
         "name": provider_name,
         "provenance": dict(provenance),
         "version": provider_version,
+    }
+
+
+def _provider_authority_binding(
+    config: ProviderConfig,
+    provider: EvalProvider,
+    *,
+    role: str,
+    provider_name: str,
+    provider_version: str,
+    protocol_provenance: dict[str, Any] | None,
+) -> dict[str, Any]:
+    capabilities = capabilities_for(config.reviewed_adapter_id, role=role)
+    protocol_lock_sha256 = (
+        _sha256(
+            _read_stable_binding_file(
+                config.protocol_lock,
+                "provider protocol lock",
+                MAX_FILE_BYTES,
+            )
+        )
+        if config.protocol_lock is not None
+        else None
+    )
+    normalized_config = {
+        "adapter_id": capabilities.adapter_id,
+        "billing_basis": config.billing_basis,
+        "executable": config.executable,
+        "max_budget_usd": config.max_budget_usd,
+        "model": config.model,
+        "protocol_lock": str(config.protocol_lock) if config.protocol_lock else None,
+        "protocol_lock_sha256": protocol_lock_sha256,
+        "reasoning_effort": config.reasoning_effort,
+        "timeout_seconds": config.timeout_seconds,
+    }
+    runtime_provenance = {
+        "adapter_id": capabilities.adapter_id,
+        "executable_sha256": getattr(provider, "executable_sha256", None),
+        "name": provider_name,
+        "protocol": protocol_provenance,
+        "version": provider_version,
+    }
+    binding = {
+        "adapter_id": capabilities.adapter_id,
+        "authority_scope": capabilities.authority_scope,
+        "capability_sha256": capabilities.sha256,
+        "config_sha256": _sha256(_canonical_json_bytes(normalized_config)),
+        "contract_revision": capabilities.contract_revision,
+        "role": role,
+        "runtime_provenance_sha256": _sha256(_canonical_json_bytes(runtime_provenance)),
+    }
+    return {
+        **binding,
+        "binding_sha256": _sha256(_canonical_json_bytes(binding)),
     }
 
 
@@ -1578,6 +1634,7 @@ class EvalRunner:
         self._generator_dispatch_ledger: _GeneratorDispatchLedger | None = None
         self._holdout_plan: HoldoutPlan | None = None
         self._agent_provider_injected = provider is not None
+        self._comparator_provider_injected = comparator_provider is not None
         if suite.evaluation_mode == "objective_only":
             if suite.comparator is not None or suite.comparator_profile is not None:
                 raise RunnerError(
@@ -1609,7 +1666,10 @@ class EvalRunner:
                 self._owned_providers.append(self.comparator_provider)
             else:
                 self.comparator_provider = comparator_provider
-            expected_policy = execution_policy_for(suite.provider.kind).as_json()
+            self._comparator_provider_instance = self.comparator_provider
+            expected_policy = execution_policy_for(
+                suite.provider.reviewed_adapter_id
+            ).as_json()
             observed_policy = _provider_execution_policy(self.agent_provider)
             if observed_policy != expected_policy:
                 raise RunnerError(
@@ -1625,6 +1685,33 @@ class EvalRunner:
             self._agent_protocol_provenance = _provider_protocol_provenance(
                 self.agent_provider,
             )
+            self._agent_authority_binding = _provider_authority_binding(
+                self.suite.provider,
+                self.agent_provider,
+                role="generation",
+                provider_name=self._agent_provider_name,
+                provider_version=self._agent_provider_version,
+                protocol_provenance=self._agent_protocol_provenance,
+            )
+            if self.comparator_provider is not None:
+                assert self.suite.comparator is not None
+                self._comparator_authority_binding = _provider_authority_binding(
+                    self.suite.comparator,
+                    self.comparator_provider,
+                    role="comparison",
+                    provider_name=_nonempty_provider_string(
+                        self.comparator_provider.name, "comparator provider name"
+                    ),
+                    provider_version=_nonempty_provider_string(
+                        self.comparator_provider.version,
+                        "comparator provider version",
+                    ),
+                    protocol_provenance=_provider_protocol_provenance(
+                        self.comparator_provider
+                    ),
+                )
+            else:
+                self._comparator_authority_binding = None
             self._agent_codex_binding = (
                 _codex_provider_binding(
                     self.suite.provider,
@@ -1634,7 +1721,7 @@ class EvalRunner:
                     self._agent_protocol_provenance,
                     verify_executable=True,
                 )
-                if self.suite.provider.kind == "codex"
+                if self.suite.provider.reviewed_adapter_id == "codex-app-server"
                 else None
             )
             (
@@ -1743,6 +1830,7 @@ class EvalRunner:
         selection = self._effective_selection(selection)
         self._assert_manifest_integrity()
         self._assert_generator_execution_policy_integrity()
+        self._assert_comparator_authority_binding_integrity()
         self._assert_codex_provider_binding_integrity(verify_executable=True)
         self._validate_holdout_selection_shape(
             selection, allow_unsealed_holdout=allow_unsealed_holdout
@@ -2017,7 +2105,7 @@ class EvalRunner:
             assert self.suite.comparator is not None
             if not (
                 runtime.bundle.release["test_release"]
-                and self.suite.comparator.kind == "fake"
+                and self.suite.comparator.reviewed_adapter_id == "deterministic-fake"
             ):
                 try:
                     if self.suite.comparator_profile.kind == "suite_local":
@@ -2082,6 +2170,8 @@ class EvalRunner:
                             )
                         )
             self._assert_holdout_plan_integrity()
+            self._assert_generator_execution_policy_integrity()
+            self._assert_comparator_authority_binding_integrity()
             spend_records = {
                 comparison_id: ledger.journal_records()
                 for comparison_id, ledger in self._comparator_spend.items()
@@ -2198,7 +2288,7 @@ class EvalRunner:
             comparison.id: comparison for comparison in self.suite.comparisons
         }
         payload = {
-            "schema_version": 3,
+            "schema_version": 4 if self.suite.schema_version >= 6 else 3,
             "plan_id": plan_id,
             "status": "sealed",
             "manifest_sha256": draft["manifest_sha256"],
@@ -2254,6 +2344,12 @@ class EvalRunner:
                 "seal_record": seal_record,
             },
         }
+        if self.suite.schema_version >= 6:
+            payload["generator_adapter_binding"] = self._agent_authority_binding
+            if self._comparator_authority_binding is not None:
+                payload["comparator_adapter_binding"] = (
+                    self._comparator_authority_binding
+                )
         if self.suite.evaluation_mode == "judged":
             comparator = draft["comparator"]
             assert comparator is not None
@@ -2363,9 +2459,13 @@ class EvalRunner:
         }
 
     def _production_generator_release_authoritative(self) -> bool:
+        capabilities = capabilities_for(self.suite.provider.reviewed_adapter_id)
         if not (
             self._agent_execution_policy["release_authoritative"]
-            and self.suite.provider.kind == "claude"
+            and capabilities.authority_scope == "production"
+            and self._agent_authority_binding["capability_sha256"]
+            == capabilities.sha256
+            and self.suite.provider.reviewed_adapter_id == "claude-cli"
             and type(self.agent_provider) is ClaudeCliProvider
             and not self._agent_provider_injected
             and self.agent_provider is self._agent_provider_instance
@@ -2401,7 +2501,9 @@ class EvalRunner:
             raise RunnerError(
                 "generator provider instance drifted after initialization"
             )
-        expected = execution_policy_for(self.suite.provider.kind).as_json()
+        expected = execution_policy_for(
+            self.suite.provider.reviewed_adapter_id
+        ).as_json()
         if expected != self._agent_execution_policy:
             raise RunnerError("manifest provider execution policy drifted")
         if _provider_execution_policy(self.agent_provider) != expected:
@@ -2420,12 +2522,22 @@ class EvalRunner:
             raise RunnerError(
                 "generator protocol provenance drifted after initialization"
             )
+        observed_authority = _provider_authority_binding(
+            self.suite.provider,
+            self.agent_provider,
+            role="generation",
+            provider_name=self._agent_provider_name,
+            provider_version=self._agent_provider_version,
+            protocol_provenance=self._agent_protocol_provenance,
+        )
+        if observed_authority != self._agent_authority_binding:
+            raise RunnerError("generator provider binding authority drifted")
         self._assert_codex_provider_binding_integrity(verify_executable=False)
 
     def _assert_codex_provider_binding_integrity(
         self, *, verify_executable: bool
     ) -> None:
-        if self.suite.provider.kind != "codex":
+        if self.suite.provider.reviewed_adapter_id != "codex-app-server":
             if self._agent_codex_binding is not None:
                 raise RunnerError("Codex provider binding persisted for another kind")
             return
@@ -2439,6 +2551,58 @@ class EvalRunner:
         )
         if observed != self._agent_codex_binding:
             raise RunnerError("Codex provider binding drifted after initialization")
+
+    def _assert_comparator_authority_binding_integrity(self) -> None:
+        if self.comparator_provider is None:
+            if self._comparator_authority_binding is not None:
+                raise RunnerError("comparator authority persisted without a provider")
+            return
+        if self.suite.comparator is None or self._comparator_authority_binding is None:
+            raise RunnerError("comparator provider omitted its authority binding")
+        observed = _provider_authority_binding(
+            self.suite.comparator,
+            self.comparator_provider,
+            role="comparison",
+            provider_name=_nonempty_provider_string(
+                self.comparator_provider.name, "comparator provider name"
+            ),
+            provider_version=_nonempty_provider_string(
+                self.comparator_provider.version, "comparator provider version"
+            ),
+            protocol_provenance=_provider_protocol_provenance(self.comparator_provider),
+        )
+        if observed != self._comparator_authority_binding:
+            raise RunnerError("comparator provider authority binding drifted")
+
+    def _production_comparator_release_authoritative(self) -> bool:
+        if self.suite.comparator is None or self.comparator_provider is None:
+            return False
+        self._assert_comparator_authority_binding_integrity()
+        capabilities = capabilities_for(
+            self.suite.comparator.reviewed_adapter_id, role="comparison"
+        )
+        if not (
+            capabilities.authority_scope == "production"
+            and self._comparator_authority_binding is not None
+            and self._comparator_authority_binding["capability_sha256"]
+            == capabilities.sha256
+            and self.suite.comparator.reviewed_adapter_id == "claude-cli"
+            and type(self.comparator_provider) is ClaudeCliProvider
+            and not self._comparator_provider_injected
+            and self.comparator_provider is self._comparator_provider_instance
+            and getattr(self.comparator_provider, "_config", None)
+            == self.suite.comparator
+            and self.comparator_provider.name == "claude-cli"
+            and _provider_protocol_provenance(self.comparator_provider) is None
+        ):
+            return False
+        return (
+            _optional_sha256(
+                getattr(self.comparator_provider, "executable_sha256", None),
+                "comparator provider executable digest",
+            )
+            is not None
+        )
 
     def _agent_result_json(
         self,
@@ -2468,11 +2632,9 @@ class EvalRunner:
         if payload["protocol_provenance"] != self._agent_protocol_provenance:
             raise RunnerError("agent result protocol provenance differs from preflight")
         sandbox = payload["sandbox"]
-        expected_sandbox_kind = {
-            "claude": "systemd-run-user",
-            "codex": "systemd-run-user+codex-permission-profile",
-            "fake": "fake",
-        }[self.suite.provider.kind]
+        expected_sandbox_kind = capabilities_for(
+            self.suite.provider.reviewed_adapter_id
+        ).sandbox_kind
         injected_fake_admitted = (
             verifier_only
             and self._uses_exact_injected_fake_generator()
@@ -2490,7 +2652,7 @@ class EvalRunner:
             raise RunnerError("agent result sandbox kind differs from provider kind")
         if sandbox.get("enforced") is not True:
             raise RunnerError("agent result sandbox was not enforced")
-        if self.suite.provider.kind == "codex" and (
+        if self.suite.provider.reviewed_adapter_id == "codex-app-server" and (
             sandbox.get("permission_profile") != "eval"
             or sandbox.get("cleanup_confirmed") is not True
         ):
@@ -2500,7 +2662,7 @@ class EvalRunner:
         return payload
 
     def _has_injected_fake_generator_identity(self) -> bool:
-        return self.suite.provider.kind == "claude" and (
+        return self.suite.provider.reviewed_adapter_id == "claude-cli" and (
             isinstance(self.agent_provider, FakeProvider)
             or self._agent_provider_name == "deterministic-fake"
         )
@@ -2508,7 +2670,7 @@ class EvalRunner:
     def _uses_exact_injected_fake_generator(self) -> bool:
         return (
             type(self.agent_provider) is FakeProvider
-            and self.suite.provider.kind == "claude"
+            and self.suite.provider.reviewed_adapter_id == "claude-cli"
             and self._agent_provider_name == "deterministic-fake"
         )
 
@@ -2529,12 +2691,19 @@ class EvalRunner:
                 "verifier-only runs"
             )
 
-    @staticmethod
-    def _require_production_holdout_authority(runtime: ComparatorRuntime) -> None:
+    def _require_production_holdout_authority(self, runtime: ComparatorRuntime) -> None:
         try:
             runtime.require_production_authority()
         except CalibrationError as exc:
             raise RunnerError(str(exc)) from exc
+        if (
+            self.suite.schema_version >= 6
+            and not runtime.bundle.release["test_release"]
+            and not self._production_comparator_release_authoritative()
+        ):
+            raise RunnerError(
+                "production holdout requires the exact built-in Claude CLI comparator"
+            )
 
     @staticmethod
     def _assert_production_holdout_runtime(runtime: ComparatorRuntime) -> None:
@@ -2623,7 +2792,7 @@ class EvalRunner:
                 raise RunnerError(
                     "objective-only suites do not have comparator runtimes"
                 )
-            test_release = comparator.kind == "fake"
+            test_release = comparator.reviewed_adapter_id == "deterministic-fake"
             try:
                 if self.suite.schema_version == 2:
                     self._comparator_runtime = ComparatorRuntime.load(
@@ -2901,6 +3070,14 @@ class EvalRunner:
             raise RunnerError(
                 "holdout plan manifest hash does not match exact suite bytes"
             )
+        if self.suite.schema_version >= 6 and plan.schema_version != 4:
+            raise RunnerError(
+                "schema-v6 suites require schema-v4 provider authority plans"
+            )
+        if self.suite.schema_version < 6 and plan.schema_version == 4:
+            raise RunnerError(
+                "schema-v4 provider authority plans require a schema-v6 suite"
+            )
         if plan.evaluation_mode != self.suite.evaluation_mode:
             raise RunnerError("holdout plan evaluation mode does not match the suite")
         runtime: ComparatorRuntime | None = None
@@ -2947,6 +3124,24 @@ class EvalRunner:
             raise RunnerError(
                 "holdout plan generator provider binding does not match preflight"
             )
+        if plan.schema_version == 4:
+            if (
+                plan.generator_adapter_binding is None
+                or plan.generator_adapter_binding.as_json()
+                != self._agent_authority_binding
+            ):
+                raise RunnerError(
+                    "holdout plan generator adapter authority does not match preflight"
+                )
+            observed_comparator_binding = (
+                plan.comparator_adapter_binding.as_json()
+                if plan.comparator_adapter_binding is not None
+                else None
+            )
+            if observed_comparator_binding != self._comparator_authority_binding:
+                raise RunnerError(
+                    "holdout plan comparator adapter authority does not match preflight"
+                )
         if plan.seed != self.suite.seed:
             raise RunnerError("holdout plan seed does not match the suite seed")
         expected_profile = tuple(
@@ -4081,6 +4276,7 @@ class EvalRunner:
         def compare_one(index: int, order: str) -> dict[str, Any]:
             if self.suite.comparator is None or self.comparator_provider is None:
                 raise RunnerError("judged comparison requires a comparator provider")
+            self._assert_comparator_authority_binding_integrity()
             request_bytes = runtime.request_bytes(pair, repetition, order)
             request = ComparatorRequest(
                 pair=pair,
@@ -4098,6 +4294,7 @@ class EvalRunner:
             )
             result = self.comparator_provider.run_comparator(request)
             result_json = result.as_json(request)
+            self._assert_comparator_authority_binding_integrity()
             trial = {
                 "index": index,
                 "order": order,
@@ -4771,6 +4968,32 @@ def _aggregate(
         len({case.release_case_fingerprint for case in holdout_plan.cases})
         == len(holdout_plan.cases)
     )
+    provider_authority_bound = suite.schema_version < 6
+    if suite.schema_version >= 6 and holdout_plan is not None:
+        generator_binding = holdout_plan.generator_adapter_binding
+        generator_capabilities = capabilities_for(
+            suite.provider.reviewed_adapter_id, role="generation"
+        )
+        provider_authority_bound = bool(
+            generator_binding is not None
+            and generator_binding.adapter_id == generator_capabilities.adapter_id
+            and generator_binding.authority_scope == "production"
+            and generator_binding.capability_sha256 == generator_capabilities.sha256
+        )
+        if suite.evaluation_mode == "judged":
+            assert suite.comparator is not None
+            comparator_binding = holdout_plan.comparator_adapter_binding
+            comparator_capabilities = capabilities_for(
+                suite.comparator.reviewed_adapter_id, role="comparison"
+            )
+            provider_authority_bound = bool(
+                provider_authority_bound
+                and comparator_binding is not None
+                and comparator_binding.adapter_id == comparator_capabilities.adapter_id
+                and comparator_binding.authority_scope == "production"
+                and comparator_binding.capability_sha256
+                == comparator_capabilities.sha256
+            )
     suite_variants_by_id = suite.variants_by_id
     release_variant_ids = {
         variant_id
@@ -4794,6 +5017,7 @@ def _aggregate(
         holdout_plan is not None
         and release_authority_validated
         and generator_release_authoritative
+        and provider_authority_bound
         and selection.case_ids == ()
         and selection.seed is None
         and selection.comparison_ids == release_comparison_ids
@@ -4813,6 +5037,7 @@ def _aggregate(
         "applicable": selection.split == "holdout",
         "trusted_reviewed_attestation_present": holdout_plan is not None,
         "generator_release_authoritative": generator_release_authoritative,
+        "provider_authority_bound": provider_authority_bound,
         "privacy_proof_claimed": False,
         "integrity_tree_uniqueness": holdout_integrity_tree_uniqueness,
         "exact_task_content_uniqueness": holdout_task_content_uniqueness,

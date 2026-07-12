@@ -33,6 +33,11 @@ from harness_evals.comparator_runtime import (
 )
 
 from .manifest import ProviderConfig
+from .provider_capabilities import (
+    ProviderCapabilityError,
+    adapter_id_for_legacy_kind,
+    capabilities_for,
+)
 
 
 class ProviderError(RuntimeError):
@@ -64,14 +69,19 @@ CONCURRENT_AUTHORITATIVE = ProviderExecutionPolicy("concurrent", True)
 SERIALIZED_DIAGNOSTIC = ProviderExecutionPolicy("serialized", False)
 
 
-def execution_policy_for(kind: str) -> ProviderExecutionPolicy:
-    """Return the immutable execution policy for a manifest provider kind."""
+def execution_policy_for(identifier: str) -> ProviderExecutionPolicy:
+    """Return the immutable execution policy for a reviewed adapter or legacy kind."""
 
-    if kind in {"claude", "fake"}:
-        return CONCURRENT_AUTHORITATIVE
-    if kind == "codex":
+    try:
+        adapter_id = (
+            identifier if "-" in identifier else adapter_id_for_legacy_kind(identifier)
+        )
+        capabilities = capabilities_for(adapter_id)
+    except ProviderCapabilityError as exc:
+        raise ProviderError(str(exc)) from exc
+    if capabilities.concurrency == "serialized":
         return SERIALIZED_DIAGNOSTIC
-    raise ProviderError(f"unsupported provider kind: {kind}")
+    return CONCURRENT_AUTHORITATIVE
 
 
 @dataclass(frozen=True)

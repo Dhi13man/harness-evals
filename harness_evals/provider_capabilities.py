@@ -20,6 +20,7 @@ class ProviderCapabilities:
     contract_revision: int
     roles: tuple[str, ...]
     concurrency: str
+    sandbox_kind: str
     authority_scope: str
     billing_basis: str
     cost_evidence: str
@@ -44,6 +45,7 @@ class ProviderCapabilities:
             "legacy_kind": self.legacy_kind,
             "provenance_fields": list(self.provenance_fields),
             "roles": list(self.roles),
+            "sandbox_kind": self.sandbox_kind,
             "schema_version": 1,
         }
 
@@ -63,6 +65,7 @@ _CAPABILITIES: Mapping[str, ProviderCapabilities] = MappingProxyType(
             contract_revision=1,
             roles=("comparison", "generation"),
             concurrency="concurrent",
+            sandbox_kind="systemd-run-user",
             authority_scope="production",
             billing_basis="metered_api",
             cost_evidence="required",
@@ -82,6 +85,7 @@ _CAPABILITIES: Mapping[str, ProviderCapabilities] = MappingProxyType(
             contract_revision=1,
             roles=("generation",),
             concurrency="serialized",
+            sandbox_kind="systemd-run-user+codex-permission-profile",
             authority_scope="diagnostic",
             billing_basis="chatgpt_subscription",
             cost_evidence="forbidden",
@@ -109,6 +113,7 @@ _CAPABILITIES: Mapping[str, ProviderCapabilities] = MappingProxyType(
             contract_revision=1,
             roles=("comparison", "generation"),
             concurrency="concurrent",
+            sandbox_kind="fake",
             authority_scope="test",
             billing_basis="metered_api",
             cost_evidence="required",
