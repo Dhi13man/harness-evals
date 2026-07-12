@@ -115,6 +115,7 @@ class SuiteSpec:
     comparisons: tuple[ComparisonSpec, ...]
     cases: tuple[CaseSpec, ...]
     shared_verifier_dir: Path | None
+    holdout_comparison_ids: tuple[str, ...] | None
     manifest_hash: str
     raw_bytes: bytes
     raw: dict[str, Any]
@@ -703,6 +704,43 @@ def _parse_comparisons(raw: Any, variant_ids: set[str]) -> tuple[ComparisonSpec,
     return tuple(comparisons)
 
 
+def _parse_holdout_comparison_ids(
+    raw: Any, comparisons: tuple[ComparisonSpec, ...]
+) -> tuple[str, ...]:
+    data = _object(
+        raw,
+        "holdout",
+        required={"comparison_ids"},
+        allowed={"comparison_ids"},
+    )
+    values = _list(data["comparison_ids"], "holdout.comparison_ids", minimum=1)
+    selected = tuple(
+        _string(
+            value,
+            f"holdout.comparison_ids[{index}]",
+            pattern=IDENTIFIER_RE,
+        )
+        for index, value in enumerate(values)
+    )
+    if len(set(selected)) != len(selected):
+        raise ManifestError("holdout.comparison_ids contains duplicates")
+    comparison_ids = {comparison.id for comparison in comparisons}
+    unknown = set(selected) - comparison_ids
+    if unknown:
+        raise ManifestError(
+            "holdout.comparison_ids references unknown comparisons: "
+            + ", ".join(sorted(unknown))
+        )
+    canonical = tuple(
+        comparison.id for comparison in comparisons if comparison.id in set(selected)
+    )
+    if selected != canonical:
+        raise ManifestError(
+            "holdout.comparison_ids must follow canonical manifest comparison order"
+        )
+    return selected
+
+
 def _parse_cases(
     raw: Any,
     suite_root: Path,
@@ -1020,7 +1058,7 @@ def load_suite(path: str | Path) -> SuiteSpec:
     if not isinstance(data, dict):
         raise ManifestError("suite must be an object")
     schema_version = _integer(
-        data.get("schema_version"), "schema_version", minimum=2, maximum=4
+        data.get("schema_version"), "schema_version", minimum=2, maximum=5
     )
     common_fields = {
         "$schema",
@@ -1056,6 +1094,8 @@ def load_suite(path: str | Path) -> SuiteSpec:
         }
         if schema_version >= 4:
             root_fields.add("shared_verifier_dir")
+        if schema_version >= 5:
+            root_fields.add("holdout")
         if not isinstance(data.get("evaluation_mode"), str):
             raise ManifestError("evaluation_mode must be a string")
         evaluation_mode = data["evaluation_mode"]
@@ -1073,6 +1113,9 @@ def load_suite(path: str | Path) -> SuiteSpec:
         if schema_version >= 4:
             required.add("shared_verifier_dir")
             root_fields.add("shared_verifier_dir")
+        if schema_version >= 5:
+            required.add("holdout")
+            root_fields.add("holdout")
         root = _object(
             data,
             "suite",
@@ -1097,6 +1140,11 @@ def load_suite(path: str | Path) -> SuiteSpec:
     variants = _parse_variants(root["variants"], suite_root)
     comparisons = _parse_comparisons(
         root["comparisons"], {variant.id for variant in variants}
+    )
+    holdout_comparison_ids = (
+        _parse_holdout_comparison_ids(root["holdout"], comparisons)
+        if schema_version >= 5
+        else None
     )
     cases = _parse_cases(
         root["cases"],
@@ -1131,6 +1179,7 @@ def load_suite(path: str | Path) -> SuiteSpec:
         comparisons=comparisons,
         cases=cases,
         shared_verifier_dir=shared_verifier_dir,
+        holdout_comparison_ids=holdout_comparison_ids,
         manifest_hash=hashlib.sha256(raw_bytes).hexdigest(),
         raw_bytes=raw_bytes,
         raw=root,

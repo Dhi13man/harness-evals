@@ -552,6 +552,26 @@ class SuiteFixture:
             case["bundle_source"] = bundle_source
         self.save_manifest()
 
+    def use_v5_judged(
+        self,
+        comparison_ids: tuple[str, ...] = ("without-current", "old-current"),
+        bundle_source: str = "skills/demo",
+    ) -> None:
+        self.use_v4_judged(bundle_source)
+        self.manifest["schema_version"] = 5
+        self.manifest["holdout"] = {"comparison_ids": list(comparison_ids)}
+        self.save_manifest()
+
+    def use_v5_objective(
+        self,
+        comparison_ids: tuple[str, ...] = ("without-current", "old-current"),
+        bundle_source: str = "skills/demo",
+    ) -> None:
+        self.use_v4_objective(bundle_source)
+        self.manifest["schema_version"] = 5
+        self.manifest["holdout"] = {"comparison_ids": list(comparison_ids)}
+        self.save_manifest()
+
     def isolate_basic_case(self) -> None:
         case_root = "cases/basic"
         self._write_suite(f"{case_root}/prompt.md", "Fix and verify the result.\n")
@@ -6035,6 +6055,124 @@ class ManifestValidationTests(unittest.TestCase):
                 with self.assertRaises(ManifestError):
                     load_suite(self.fixture.manifest_path)
 
+    def test_v5_declares_canonical_release_comparison_ids(self) -> None:
+        schema = json.loads((HARNESS_ROOT / "suite.schema.json").read_text())
+        self.fixture.use_v5_objective(("release-alpha", "release-beta"))
+        self.fixture.manifest["variants"] = [
+            {"id": "empty-arm", "kind": "without_skill"},
+            {
+                "id": "archive-arm",
+                "kind": "git_ref",
+                "git_ref": self.fixture.baseline_commit,
+            },
+            {
+                "id": "trial-arm",
+                "kind": "worktree",
+                "root": "..",
+                "source_ref": self.fixture.treatment_commit,
+            },
+            {"id": "unused-arm", "kind": "without_skill"},
+        ]
+        self.fixture.manifest["comparisons"] = [
+            {
+                "id": "release-alpha",
+                "control": "empty-arm",
+                "treatment": "trial-arm",
+                "repetitions": 3,
+                "comparator_order": "ab_ba",
+            },
+            {
+                "id": "release-beta",
+                "control": "archive-arm",
+                "treatment": "trial-arm",
+                "repetitions": 3,
+                "comparator_order": "ab_ba",
+            },
+            {
+                "id": "diagnostic-only",
+                "control": "archive-arm",
+                "treatment": "empty-arm",
+                "repetitions": 3,
+                "comparator_order": "ab_ba",
+            },
+        ]
+        self.fixture.save_manifest()
+        valid = copy.deepcopy(self.fixture.manifest)
+        self.assertEqual(list(Draft202012Validator(schema).iter_errors(valid)), [])
+        suite = load_suite(self.fixture.manifest_path)
+        self.assertEqual(
+            suite.holdout_comparison_ids, ("release-alpha", "release-beta")
+        )
+        self.assertNotIn("unused-arm", suite.holdout_comparison_ids)
+        self.assertNotIn("diagnostic-only", suite.holdout_comparison_ids)
+
+        structural_mutations: list[dict[str, object]] = []
+        missing = copy.deepcopy(valid)
+        del missing["holdout"]
+        structural_mutations.append(missing)
+        empty = copy.deepcopy(valid)
+        empty["holdout"]["comparison_ids"] = []
+        structural_mutations.append(empty)
+        duplicate = copy.deepcopy(valid)
+        duplicate["holdout"]["comparison_ids"] = ["release-alpha", "release-alpha"]
+        structural_mutations.append(duplicate)
+        invalid_id = copy.deepcopy(valid)
+        invalid_id["holdout"]["comparison_ids"] = ["Invalid ID"]
+        structural_mutations.append(invalid_id)
+        extra = copy.deepcopy(valid)
+        extra["holdout"]["unexpected"] = True
+        structural_mutations.append(extra)
+        for mutation in structural_mutations:
+            with self.subTest(structural=mutation):
+                self.assertTrue(
+                    list(Draft202012Validator(schema).iter_errors(mutation))
+                )
+                self.fixture.manifest = mutation
+                self.fixture.save_manifest()
+                with self.assertRaises(ManifestError):
+                    load_suite(self.fixture.manifest_path)
+
+        semantic_mutations = []
+        unknown = copy.deepcopy(valid)
+        unknown["holdout"]["comparison_ids"] = ["missing-comparison"]
+        semantic_mutations.append(unknown)
+        reordered = copy.deepcopy(valid)
+        reordered["holdout"]["comparison_ids"] = ["release-beta", "release-alpha"]
+        semantic_mutations.append(reordered)
+        for mutation in semantic_mutations:
+            with self.subTest(semantic=mutation):
+                self.assertEqual(
+                    list(Draft202012Validator(schema).iter_errors(mutation)), []
+                )
+                self.fixture.manifest = mutation
+                self.fixture.save_manifest()
+                with self.assertRaises(ManifestError):
+                    load_suite(self.fixture.manifest_path)
+
+        for version in (2, 3, 4):
+            self.fixture.manifest = self.fixture._manifest()
+            if version == 3:
+                self.fixture.use_v3_judged()
+            elif version == 4:
+                self.fixture.use_v4_judged()
+            self.fixture.manifest["holdout"] = {"comparison_ids": ["without-current"]}
+            self.fixture.save_manifest()
+            with self.subTest(legacy_version=version):
+                self.assertTrue(
+                    list(
+                        Draft202012Validator(schema).iter_errors(self.fixture.manifest)
+                    )
+                )
+                with self.assertRaises(ManifestError):
+                    load_suite(self.fixture.manifest_path)
+
+        self.fixture.manifest = self.fixture._manifest()
+        self.fixture.use_v5_judged(("without-current",))
+        self.assertEqual(
+            load_suite(self.fixture.manifest_path).holdout_comparison_ids,
+            ("without-current",),
+        )
+
     def test_shared_verifier_dir_versions_null_and_configured(self) -> None:
         schema = json.loads((HARNESS_ROOT / "suite.schema.json").read_text())
         self.assertIsNone(load_suite(self.fixture.manifest_path).shared_verifier_dir)
@@ -6812,13 +6950,18 @@ class CheckedInSuiteTests(unittest.TestCase):
             schema["properties"]["cases"]["items"]["required"],
         )
 
-    def test_suite_schema_supports_strict_v2_v3_and_v4_modes(self) -> None:
+    def test_suite_schema_supports_strict_v2_v3_v4_and_v5_modes(self) -> None:
         schema = json.loads(
             (HARNESS_ROOT / "suite.schema.json").read_text(encoding="utf-8")
         )
         self.assertEqual(
             [branch["$ref"] for branch in schema["oneOf"]],
-            ["#/$defs/suiteV2", "#/$defs/suiteV3", "#/$defs/suiteV4"],
+            [
+                "#/$defs/suiteV2",
+                "#/$defs/suiteV3",
+                "#/$defs/suiteV4",
+                "#/$defs/suiteV5",
+            ],
         )
         self.assertEqual(
             schema["$defs"]["suiteV2"]["properties"]["schema_version"]["const"], 2
@@ -6834,6 +6977,10 @@ class CheckedInSuiteTests(unittest.TestCase):
             schema["$defs"]["suiteV4"]["properties"]["schema_version"]["const"], 4
         )
         self.assertIn("shared_verifier_dir", schema["$defs"]["suiteV4"]["required"])
+        self.assertEqual(
+            schema["$defs"]["suiteV5"]["properties"]["schema_version"]["const"], 5
+        )
+        self.assertIn("holdout", schema["$defs"]["suiteV5"]["required"])
 
     def test_gcc_attestation_includes_derived_driver_closure(self) -> None:
         gcc = shutil.which("gcc")

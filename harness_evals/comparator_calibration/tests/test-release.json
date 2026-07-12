@@ -163,7 +163,7 @@
     "harness_runner_source_sha256": "0379efb009d68a7cb32b52cb97ea5180ee58e950f0d0696bd43fcc15fea2a36c",
     "provider_source_sha256": "5b899ff776fb4c60699b6da68df7c0273254cc5b647c1812c256a7b4876dd74a",
     "profile_registry_source_sha256": "a1fb55b8ac27c8715feeeeac8f0df61f8d789514c4c12faf9508a25dfe466d26",
-    "harness_manifest_source_sha256": "d5a2034eb8f3d2d529f8ff4f3f1bc7f6751151dfa490ca2d16f08458bf9d12e7",
+    "harness_manifest_source_sha256": "310330e0e7254a43f4aad17e2e371657387187d6c4a45169a181503453d937df",
     "harness_package_source_sha256": "746345b5d89221946749913b036a1d3fd26bf203656546512dacb6080e831e9a",
     "run_evals_source_sha256": "bb9d15adae63f5cedbb5f972ac1b38a0e0524b89651e73713fa8d606f26803f8",
     "holdout_plan_source_sha256": "4272443f23f3ae5540c5833084c0b0a543f7ffe789c9c0d86fcfa26209f5a705",
