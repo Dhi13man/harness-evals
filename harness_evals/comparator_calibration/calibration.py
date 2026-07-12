@@ -1305,6 +1305,7 @@ def validate_release(bundle: Bundle) -> dict[str, Any]:
     artifacts = _exact(
         release["artifacts"],
         {
+            "profile_descriptor_sha256",
             "corpus_sha256",
             "manifest_schema_sha256",
             "rubric_sha256",
@@ -1327,6 +1328,7 @@ def validate_release(bundle: Bundle) -> dict[str, Any]:
     holdout_plan_schema_path = project_root / "holdout-plan.schema.json"
     holdout_plan_schema = load_json(holdout_plan_schema_path)
     actual_hashes = {
+        "profile_descriptor_sha256": file_sha256(bundle.root / "profile.json"),
         "corpus_sha256": canonical_sha256(bundle.manifest),
         "manifest_schema_sha256": canonical_sha256(bundle.manifest_schema),
         "rubric_sha256": canonical_sha256(bundle.rubric),
@@ -1500,6 +1502,7 @@ def validate_release(bundle: Bundle) -> dict[str, Any]:
             "source_sha256",
             "harness_runner_source_sha256",
             "provider_source_sha256",
+            "profile_registry_source_sha256",
             "harness_manifest_source_sha256",
             "harness_package_source_sha256",
             "run_evals_source_sha256",
@@ -1535,6 +1538,9 @@ def validate_release(bundle: Bundle) -> dict[str, Any]:
         "source_sha256": project_root / "harness_evals" / "comparator_runtime.py",
         "harness_runner_source_sha256": project_root / "harness_evals" / "runner.py",
         "provider_source_sha256": project_root / "harness_evals" / "providers.py",
+        "profile_registry_source_sha256": project_root
+        / "harness_evals"
+        / "comparator_profiles.py",
         "harness_manifest_source_sha256": project_root
         / "harness_evals"
         / "manifest.py",

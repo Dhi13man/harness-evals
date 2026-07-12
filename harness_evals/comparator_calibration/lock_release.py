@@ -44,6 +44,7 @@ def _artifacts() -> dict[str, str]:
     holdout_plan_schema = load_json(holdout_plan_schema_path)
     reviews = review_artifact_hashes(manifest)
     return {
+        "profile_descriptor_sha256": file_sha256(ROOT / "profile.json"),
         "corpus_sha256": canonical_sha256(manifest),
         "manifest_schema_sha256": canonical_sha256(manifest_schema),
         "rubric_sha256": canonical_sha256(rubric),
@@ -156,6 +157,9 @@ def _release(*, test: bool) -> dict[str, Any]:
             "provider_source_sha256": file_sha256(
                 PROJECT_ROOT / "harness_evals" / "providers.py"
             ),
+            "profile_registry_source_sha256": file_sha256(
+                PROJECT_ROOT / "harness_evals" / "comparator_profiles.py"
+            ),
             "harness_manifest_source_sha256": file_sha256(
                 PROJECT_ROOT / "harness_evals" / "manifest.py"
             ),
@@ -181,16 +185,40 @@ def _release(*, test: bool) -> dict[str, Any]:
     }
 
 
-def _write(path: Path, value: dict[str, Any]) -> None:
+def _encoded(value: dict[str, Any]) -> bytes:
+    return (json.dumps(value, ensure_ascii=True, indent=2) + "\n").encode("ascii")
+
+
+def _write(path: Path, raw_bytes: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(value, ensure_ascii=True, indent=2) + "\n", encoding="utf-8"
-    )
+    path.write_bytes(raw_bytes)
 
 
 def main() -> None:
-    _write(ROOT / "release.json", _release(test=False))
-    _write(ROOT / "tests" / "test-release.json", _release(test=True))
+    production_release = _encoded(_release(test=False))
+    test_release = _encoded(_release(test=True))
+    authority = _encoded(
+        {
+            "schema_version": 1,
+            "profiles": [
+                {
+                    "id": "software-engineering-v2.3",
+                    "descriptor_sha256": file_sha256(ROOT / "profile.json"),
+                    "production_release_sha256": hashlib.sha256(
+                        production_release
+                    ).hexdigest(),
+                    "test_release_sha256": hashlib.sha256(test_release).hexdigest(),
+                    "certification_contract_sha256": file_sha256(
+                        ROOT / "evidence.schema.json"
+                    ),
+                    "requires_live_certification": True,
+                }
+            ],
+        }
+    )
+    _write(ROOT / "release.json", production_release)
+    _write(ROOT / "tests" / "test-release.json", test_release)
+    _write(PROJECT_ROOT / "harness_evals/comparator-profile-authority.json", authority)
 
 
 if __name__ == "__main__":
