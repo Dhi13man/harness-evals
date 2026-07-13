@@ -75,8 +75,6 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: requirements/build.txt
       - name: Validate package identity
         run: |
           python - <<'PY'
@@ -115,6 +113,8 @@ jobs:
         with:
           subject-checksums: SHA256SUMS
       - name: Prepare release notes and provenance bundle
+        env:
+          ATTESTATION_BUNDLE: ${{ steps.attest.outputs.bundle-path }}
         run: |
           mkdir release-assets
           python - <<'PY'
@@ -133,7 +133,7 @@ jobs:
           Path("release-assets/release-notes.md").write_text(notes + "\n", encoding="utf-8")
           PY
           cp dist/* SHA256SUMS release-assets/
-          cp "${{ steps.attest.outputs.bundle-path }}" "release-assets/harness_evals-${GITHUB_REF_NAME#v}.sigstore.json"
+          cp "$ATTESTATION_BUNDLE" "release-assets/harness_evals-${GITHUB_REF_NAME#v}.sigstore.json"
       - name: Upload release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

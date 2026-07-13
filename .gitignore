@@ -29,6 +29,7 @@ venv/
 # Builds and editors
 build/
 dist/
+node_modules/
 .DS_Store
 .idea/
 .vscode/
