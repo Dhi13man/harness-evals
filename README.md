@@ -47,6 +47,18 @@ The runtime package has one exact third-party Python dependency for RFC 8785 JSO
 
 ## Quick Start
 
+Install and verify the published 0.3.0 wheel with a GitHub CLI release that provides `gh attestation`:
+
+```bash
+mkdir -p /tmp/harness-evals-0.3.0
+gh release download v0.3.0 --repo Dhi13man/harness-evals --pattern "harness_evals-0.3.0*" --pattern SHA256SUMS --dir /tmp/harness-evals-0.3.0
+(cd /tmp/harness-evals-0.3.0 && sha256sum --check SHA256SUMS)
+gh attestation verify /tmp/harness-evals-0.3.0/harness_evals-0.3.0-py3-none-any.whl --repo Dhi13man/harness-evals
+python -m pip install /tmp/harness-evals-0.3.0/harness_evals-0.3.0-py3-none-any.whl
+```
+
+For source development:
+
 ```bash
 git clone https://github.com/Dhi13man/harness-evals.git
 cd harness-evals

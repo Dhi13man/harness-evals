@@ -8,6 +8,8 @@ All notable changes to Harness Evals are documented in this file. The format fol
 
 ### Added
 
+- Added schema v3 with explicit judged and objective-only evaluation modes plus registered or suite-local comparator profile selection.
+- Added package-backed comparator profiles, a test-authority plain-language profile, and shared profile-owned semantic contracts for domain-specific judgment without hard-coding evaluator criteria.
 - Added schema v4 with explicit per-case bundle source paths and optional contained shared verifier resources.
 - Added installed-wheel coverage for external suites whose bundles, cases, and verifier resources use independent layouts.
 - Added schema v5 with suite-owned ordered release comparisons and holdout-plan schema v3 with generic per-variant source bindings.
@@ -32,6 +34,8 @@ All notable changes to Harness Evals are documented in this file. The format fol
 
 ### Migration
 
+- To adopt explicit evaluation semantics, migrate to schema v3, select `evaluation_mode`, and either configure a judged `comparator_profile` with case contracts or remove comparator fields for objective-only diagnostics.
+- To adopt independent layouts, migrate to schema v4, declare every case's canonical `bundle_source`, and set `shared_verifier_dir` to a contained resource directory or `null`.
 - To adopt generic source authority, migrate an unconsumed suite to schema v5, add `holdout.comparison_ids` in manifest order, validate the suite, and prepare a new holdout plan.
 - To adopt reviewed provider authority, migrate to schema v6, replace legacy provider kinds with registered adapter IDs, validate the suite, and prepare a new schema-v4 holdout plan.
 - To adopt declared output artifacts, migrate to schema v7 and add exactly one `artifact_contract` to every case. Existing schema-v2 through schema-v6 cases retain the workspace-diff compatibility default.
