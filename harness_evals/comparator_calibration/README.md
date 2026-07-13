@@ -1,6 +1,14 @@
 # Harness Evals Comparator Calibration
 
-This directory calibrates a pairwise code-change comparator that is blinded to gold labels and canonical candidate identities before it is trusted to score software engineering and testing evaluations. It is a closed, offline-verifiable release bundle. Live collection is explicit and is not part of the unit tests.
+This directory contains the production-authority software-engineering profile for a pairwise comparator that is blinded to gold labels and canonical candidate identities before it is trusted to score software engineering and testing evaluations. It is a closed, offline-verifiable release bundle. Live collection is explicit and is not part of the unit tests.
+
+## Profile Boundary
+
+The shared evaluator is implemented by `calibration.py` and `../comparator_runtime.py`; the software domain is not encoded as an unavoidable runner contract. `semantic-contract.json` binds this profile's closed engine strategy, adapters, criterion and basis vocabularies, corpus identity, calibration rules, and support thresholds. The release binds that contract together with the descriptor, rubric, schemas, corpus, evaluator sources, external suite authority, and runtime sources.
+
+`../plain_language_calibration/` is a data-only test-authority profile that uses the same engine with four editorial criteria. Its author-authored fixture corpus proves profile-owned semantics, suite-local execution, installed-package loading, and authority containment. It is not independent production calibration and cannot access a production holdout or authorize a release.
+
+Data profiles cannot provide executable comparison code. New engine strategies or adapters require a reviewed package change and an explicit allowlist entry; arbitrary imports and profile-defined expression languages are rejected.
 
 ## Decision Protocol
 
@@ -51,6 +59,8 @@ The original records remain intact even where the v2.1 applicability rule makes 
 | --- | --- |
 | `manifest.json` | Corpus, contracts, patches, probes, and adjudication |
 | `manifest.schema.json` | Versioned corpus schema |
+| `profile.json` | Versioned profile descriptor and resource map |
+| `semantic-contract.json` | Closed engine, adapter, vocabulary, calibration, and support contract |
 | `rubric.json` | Eligibility, criterion, evidence, and outcome rules |
 | `request-template.json` | Exact system prompt and payload field order |
 | `response.schema.json` | Model output contract; no overall verdict field |

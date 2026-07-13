@@ -13,11 +13,12 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 
-PROFILE_PATH = "harness_evals/comparator_calibration/profile.json"
 AUTHORITY_PATH = "harness_evals/comparator-profile-authority.json"
-PROFILE_ROOT = "harness_evals/comparator_calibration/"
-ALLOWED_PROFILE_SUPPORT_FILES = {
-    f"{PROFILE_ROOT}README.md",
+PROFILE_LAYOUTS = {
+    "harness_evals/comparator_calibration/profile.json": {
+        "harness_evals/comparator_calibration/README.md"
+    },
+    "harness_evals/plain_language_calibration/profile.json": set(),
 }
 
 
@@ -39,13 +40,13 @@ def _run(*argv: str, cwd: Path) -> subprocess.CompletedProcess[str]:
     return completed
 
 
-def _declared_package_resources(profile_bytes: bytes) -> set[str]:
+def _declared_package_resources(profile_path: str, profile_bytes: bytes) -> set[str]:
     descriptor = json.loads(profile_bytes)
     resources = descriptor.get("resources")
     if not isinstance(resources, dict) or not resources:
         raise RuntimeError("packaged profile descriptor has no resource map")
-    declared = {PROFILE_PATH, AUTHORITY_PATH}
-    base = PurePosixPath(PROFILE_PATH).parent
+    declared = {profile_path, AUTHORITY_PATH}
+    base = PurePosixPath(profile_path).parent
     for name, raw_path in resources.items():
         path = PurePosixPath(raw_path) if isinstance(raw_path, str) else None
         if (
@@ -62,7 +63,12 @@ def _declared_package_resources(profile_bytes: bytes) -> set[str]:
 def _inspect_distributions(wheel: Path, sdist: Path) -> None:
     with zipfile.ZipFile(wheel) as archive:
         wheel_files = set(archive.namelist())
-        wheel_required = _declared_package_resources(archive.read(PROFILE_PATH))
+        wheel_required = set().union(
+            *(
+                _declared_package_resources(path, archive.read(path))
+                for path in PROFILE_LAYOUTS
+            )
+        )
         wheel_resource_bytes = {
             path: archive.read(path) for path in wheel_required if path in wheel_files
         }
@@ -76,13 +82,19 @@ def _inspect_distributions(wheel: Path, sdist: Path) -> None:
             for member in archive.getmembers()
             if member.isfile() and "/" in member.name
         }
-        profile_member = normalized_sdist_files.get(PROFILE_PATH)
-        if profile_member is None:
-            raise RuntimeError("sdist omitted the profile descriptor")
-        reader = archive.extractfile(profile_member)
-        if reader is None:
-            raise RuntimeError("sdist profile descriptor is not a regular file")
-        sdist_required = _declared_package_resources(reader.read())
+        sdist_required: set[str] = {AUTHORITY_PATH}
+        for profile_path in PROFILE_LAYOUTS:
+            profile_member = normalized_sdist_files.get(profile_path)
+            if profile_member is None:
+                raise RuntimeError(f"sdist omitted profile descriptor: {profile_path}")
+            reader = archive.extractfile(profile_member)
+            if reader is None:
+                raise RuntimeError(
+                    f"sdist profile descriptor is not a regular file: {profile_path}"
+                )
+            sdist_required.update(
+                _declared_package_resources(profile_path, reader.read())
+            )
         sdist_resource_bytes = {}
         for path in sdist_required:
             member = normalized_sdist_files.get(path)
@@ -104,15 +116,18 @@ def _inspect_distributions(wheel: Path, sdist: Path) -> None:
         ("wheel", wheel_files, wheel_required),
         ("sdist", set(normalized_sdist_files), sdist_required),
     ):
-        unexpected = {
-            path
-            for path in files
-            if path.startswith(PROFILE_ROOT)
-            and not path.endswith("/")
-            and path not in required
-            and path not in ALLOWED_PROFILE_SUPPORT_FILES
-            and PurePosixPath(path).suffix not in {".py", ".pyi"}
-        }
+        unexpected = set()
+        for profile_path, allowed_support in PROFILE_LAYOUTS.items():
+            profile_root = PurePosixPath(profile_path).parent.as_posix() + "/"
+            unexpected.update(
+                path
+                for path in files
+                if path.startswith(profile_root)
+                and not path.endswith("/")
+                and path not in required
+                and path not in allowed_support
+                and PurePosixPath(path).suffix not in {".py", ".pyi"}
+            )
         if unexpected:
             raise RuntimeError(
                 f"{label} contains unexpected non-code profile files: "
@@ -225,11 +240,40 @@ def _write_external_suite(root: Path) -> Path:
 
 def _run_external_smoke(cli: Path, forbidden_root: Path) -> None:
     import harness_evals
-    from harness_evals.comparator_profiles import BUILTIN_SOFTWARE_PROFILE_ID
+    from harness_evals.comparator_profiles import (
+        BUILTIN_PLAIN_LANGUAGE_PROFILE_ID,
+        BUILTIN_SOFTWARE_PROFILE_ID,
+        resolve_builtin_profile,
+    )
+    from harness_evals.comparator_runtime import CalibrationError, ComparatorRuntime
 
     package_path = Path(harness_evals.__file__).resolve()
     if package_path.is_relative_to(forbidden_root.resolve()):
         raise RuntimeError(f"smoke imported checkout package: {package_path}")
+    plain_language = resolve_builtin_profile(BUILTIN_PLAIN_LANGUAGE_PROFILE_ID)
+    if plain_language.authority_binding.authority_scope != "test":
+        raise RuntimeError("installed plain-language profile has invalid authority")
+    runtime = ComparatorRuntime.load_builtin_profile(
+        BUILTIN_PLAIN_LANGUAGE_PROFILE_ID, use_test_release=True
+    )
+    try:
+        if runtime.profile_authority_scope != "test":
+            raise RuntimeError("installed plain-language runtime lost test authority")
+        if tuple(runtime.bundle.semantic_contract["criterion_ids"]) != (
+            "factual_fidelity",
+            "reader_clarity",
+            "audience_fit",
+            "concision",
+        ):
+            raise RuntimeError("installed plain-language runtime has wrong criteria")
+    finally:
+        runtime.close()
+    try:
+        ComparatorRuntime.load_builtin_profile(BUILTIN_PLAIN_LANGUAGE_PROFILE_ID)
+    except CalibrationError:
+        pass
+    else:
+        raise RuntimeError("installed test-authority profile loaded for production")
     with tempfile.TemporaryDirectory(prefix="harness-evals-installed-") as temporary:
         root = Path(temporary).resolve()
         manifest = _write_external_suite(root)

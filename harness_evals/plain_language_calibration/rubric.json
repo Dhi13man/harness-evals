@@ -1,0 +1,58 @@
+{
+  "rubric_id": "plain-language-revision-rubric-v1",
+  "version": "2.3.0",
+  "criteria": [
+    {
+      "id": "factual_fidelity",
+      "definition": "The revision preserves every controlled fact, date, quantity, condition, and required action without adding unsupported claims."
+    },
+    {
+      "id": "reader_clarity",
+      "definition": "The revision makes the situation and required action unambiguous to a reader encountering the notice without additional context."
+    },
+    {
+      "id": "audience_fit",
+      "definition": "The revision uses vocabulary, tone, and explanatory detail appropriate for the audience named in the controlled contract."
+    },
+    {
+      "id": "concision",
+      "definition": "The revision removes avoidable words and repetition without omitting facts, qualifications, or instructions needed by the audience."
+    }
+  ],
+  "admissibility": {
+    "eligible": "Every required behavior and hard constraint is satisfied.",
+    "ineligible": "At least one required behavior or hard constraint is violated.",
+    "unknown": "At least one requirement cannot be determined from supplied artifacts and none is proven violated."
+  },
+  "outcome_rule": {
+    "eligible_vs_ineligible": "The eligible candidate wins.",
+    "both_eligible": "Apply Pareto comparison across material criterion decisions; criteria are applicable and scored only in this state.",
+    "criteria_not_applicable": "Use null criteria whenever either candidate is ineligible or unknown; the mechanical outcome uses eligibility only.",
+    "neither_or_unknown": "Return unqualified.",
+    "pareto": {
+      "only_a_and_ties": "A",
+      "only_b_and_ties": "B",
+      "all_ties": "tie",
+      "a_and_b": "tradeoff"
+    }
+  },
+  "production_decisive_policy": {
+    "factual_fidelity": "tie-only-until-calibration-support-expands",
+    "reader_clarity": "decisive",
+    "audience_fit": "tie-only-until-calibration-support-expands",
+    "concision": "decisive"
+  },
+  "evidence": {
+    "minimum_observation_characters": 20,
+    "required_fields": [
+      "artifact",
+      "path",
+      "line_start",
+      "line_end",
+      "quote",
+      "semantic_anchor",
+      "observation"
+    ],
+    "rule": "Evidence must cite a bounded one-based inclusive line range in reconstructed candidate bytes or a controlled contract field, quote exact lexical bytes from that range, provide the exact typed requirement/status or criterion/winner semantic anchor, repeat both quote and semantic anchor in the observation, and explain the implication; labels, verdicts, unrelated prose, and unbounded line claims are not evidence."
+  }
+}

@@ -1,0 +1,280 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "evidence.schema.json",
+  "x-artifact-version": "2.3.0",
+  "title": "Offline comparator calibration evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "release_sha256",
+    "corpus_sha256",
+    "rubric_sha256",
+    "request_template_sha256",
+    "response_schema_sha256",
+    "judge",
+    "spend_ledger",
+    "trials"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "release_sha256": {
+      "$ref": "#/$defs/hash"
+    },
+    "corpus_sha256": {
+      "$ref": "#/$defs/hash"
+    },
+    "rubric_sha256": {
+      "$ref": "#/$defs/hash"
+    },
+    "request_template_sha256": {
+      "$ref": "#/$defs/hash"
+    },
+    "response_schema_sha256": {
+      "$ref": "#/$defs/hash"
+    },
+    "judge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "provider_version", "requested_model"],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requested_model": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "spend_ledger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["records", "records_sha256", "charged_usd"],
+      "properties": {
+        "records": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/spendRecord"}
+        },
+        "records_sha256": {"$ref": "#/$defs/hash"},
+        "charged_usd": {"type": "number", "minimum": 0}
+      }
+    },
+    "trials": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "pair_id",
+          "repetition",
+          "order",
+          "invocation_id",
+          "request",
+          "request_sha256",
+          "raw_response",
+          "raw_response_sha256",
+          "parsed_response_sha256",
+          "command_sha256",
+          "stdin_sha256",
+          "provider",
+          "provider_version",
+          "requested_model",
+          "actual_models",
+          "executable_sha256",
+          "spend_attempt_id",
+          "cost_usd",
+          "executor",
+          "response"
+        ],
+        "properties": {
+          "pair_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "repetition": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "order": {
+            "enum": ["AB", "BA"]
+          },
+          "invocation_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "request": {
+            "type": "string",
+            "minLength": 2
+          },
+          "request_sha256": {
+            "$ref": "#/$defs/hash"
+          },
+          "raw_response": {
+            "type": "string",
+            "minLength": 2
+          },
+          "raw_response_sha256": {
+            "$ref": "#/$defs/hash"
+          },
+          "parsed_response_sha256": {
+            "$ref": "#/$defs/hash"
+          },
+          "command_sha256": {
+            "$ref": "#/$defs/hash"
+          },
+          "stdin_sha256": {
+            "$ref": "#/$defs/hash"
+          },
+          "provider": {
+            "type": "string",
+            "minLength": 1
+          },
+          "provider_version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "requested_model": {
+            "type": "string",
+            "minLength": 1
+          },
+          "actual_models": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "executable_sha256": {"$ref": "#/$defs/hash"},
+          "spend_attempt_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "cost_usd": {
+            "type": "number",
+            "minimum": 0
+          },
+          "executor": {
+            "$ref": "#/$defs/executor"
+          },
+          "response": {
+            "$ref": "response.schema.json"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "fileIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["device", "inode", "size", "mode", "mtime_ns", "ctime_ns"],
+      "properties": {
+        "device": {"type": "integer", "minimum": 0},
+        "inode": {"type": "integer", "minimum": 1},
+        "size": {"type": "integer", "minimum": 1},
+        "mode": {"type": "integer", "minimum": 0},
+        "mtime_ns": {"type": "integer", "minimum": 0},
+        "ctime_ns": {"type": "integer", "minimum": 0}
+      }
+    },
+    "executor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "enforced",
+        "provider_version",
+        "executable_path",
+        "executable_identity",
+        "executable_sha256",
+        "execution_source",
+        "execution_descriptor_path",
+        "execution_copy_path",
+        "command_executable",
+        "systemd_version",
+        "properties",
+        "environment_mode",
+        "process_namespace",
+        "stdin_sha256",
+        "remote_service_attestation"
+      ],
+      "properties": {
+        "kind": {"const": "shared-systemd-claude-executor"},
+        "enforced": {"const": true},
+        "provider_version": {"type": "string", "minLength": 1},
+        "executable_path": {"type": "string", "minLength": 1},
+        "executable_identity": {"$ref": "#/$defs/fileIdentity"},
+        "executable_sha256": {"$ref": "#/$defs/hash"},
+        "execution_source": {"const": "descriptor-verified-private-copy"},
+        "execution_descriptor_path": {
+          "type": "string",
+          "pattern": "^/proc/[1-9][0-9]*/fd/[0-9]+$"
+        },
+        "execution_copy_path": {
+          "type": "string",
+          "pattern": "^/run/user/[0-9]+/skill-executable-[A-Za-z0-9_-]+/claude$"
+        },
+        "command_executable": {
+          "type": "string",
+          "pattern": "^/run/user/[0-9]+/skill-eval-comparator-runtime/bin/claude$"
+        },
+        "systemd_version": {"type": "string", "minLength": 1},
+        "properties": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "environment_mode": {"const": "env-i-allowlist"},
+        "process_namespace": {"const": "unshare-user-pid-private-proc"},
+        "stdin_sha256": {"$ref": "#/$defs/hash"},
+        "remote_service_attestation": {
+          "const": "not-cryptographically-attested"
+        }
+      }
+    },
+    "spendRecord": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["event", "attempt_id", "invocation_id", "request_sha256", "reserved_usd"],
+          "properties": {
+            "event": {"const": "reserve"},
+            "attempt_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+            "invocation_id": {"$ref": "#/$defs/hash"},
+            "request_sha256": {"$ref": "#/$defs/hash"},
+            "reserved_usd": {"type": "number", "exclusiveMinimum": 0}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["event", "attempt_id", "charged_usd", "invocation_id", "request_sha256"],
+          "properties": {
+            "event": {"enum": ["reconcile", "forfeit", "historical"]},
+            "attempt_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+            "charged_usd": {"type": "number", "minimum": 0},
+            "invocation_id": {"$ref": "#/$defs/hash"},
+            "request_sha256": {"$ref": "#/$defs/hash"}
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,24 +1,24 @@
 {
   "schema_version": 2,
-  "release_id": "software-engineering-comparator-reference-cli-v2.3",
+  "release_id": "plain-language-revision-v1.0",
   "test_release": false,
   "artifacts": {
-    "profile_descriptor_sha256": "4611179d4f458f3364844013998060e60cbfab990b71cc17fc4981f8afad38ca",
-    "corpus_sha256": "aa1f0e16c8025d5489bcbae0774ea8e7de52d50bf0aec9073d3810f53960385b",
-    "manifest_schema_sha256": "5ea07dd9a106e00178099a81f12d1bb521b089c934c08ed406aa566c02cc4eff",
-    "rubric_sha256": "32eed2046b37396da8e535352b9509f0f59b5d2494d44d105b89c18631dd24e3",
-    "request_template_sha256": "da332f0e366a514cb43e9a1de75fae45d76223cc944266ce133e869009347868",
-    "system_prompt_sha256": "b4a34cc2b92111a31a920f0508b390b1d6bd4180955573c1c43b0fd4587127f1",
-    "response_schema_sha256": "4cae294c93d4fb52d6c7c91833cc52de62c200f8be21e23604eb6456e8489bfa",
+    "profile_descriptor_sha256": "718e46433f4844cc4b011adaa31dd1086279411a6467dffd2a78afabb8c382a0",
+    "corpus_sha256": "96517958aa3e47ac334c38a0554bc682bd94931d3774e28baf56fbbeb3d745a6",
+    "manifest_schema_sha256": "d017b7fb6b7a34d6b4380a561c118fcfa8b9bd0f2554fcd9e86718085182c9d2",
+    "rubric_sha256": "e129b01041f9b1dc273d30d2029ede368d3c112405b5e1ab76f080c19e74130e",
+    "request_template_sha256": "40608a3f29b4d72329e6dc9b3174f2f6a9068f13fd2c08892209362f14850d35",
+    "system_prompt_sha256": "e1a8d21859257b675ce41b1d39f30c1c8f67b503457c4e0d9a2124237e1fd01e",
+    "response_schema_sha256": "9cc32a6a5274e7bdac40317a914ada8e188db2384c6f099c4d9dfe466a8d586f",
     "evidence_schema_sha256": "61f2ece9cec3321d71c7babf0b3ab98ea949007bc07943aaf6c236a92f64d4e9",
-    "semantic_contract_sha256": "7890c43a7aa77ab128d3eae51c3a9eadbabdab51d6f0d5ef5223fbae80d1d1eb",
+    "semantic_contract_sha256": "264c3e7fae90b1fe0a5811ba461c762a34e562c8067f664cf905424da8f81dcc",
     "holdout_plan_schema_sha256": "f4fd25b9d7312f64a725d2512e40cbdcbb273eed23f1770ff57e3f697560dd01",
     "holdout_plan_schema_bytes_sha256": "716a1759ca2febdda45a9aa0c53bf917e61a116d53ac74ae3b310d81d85f3a5e",
-    "reviewer_a_sha256": "02cd6fab6a9a8e0ee7ea47ec89ba721d511d22e77d0c5dc7a06dad42b61f9ed4",
-    "reviewer_b_sha256": "2cb68dee2b90ddf46a0783a50cb9b0fb298be9d05b02925a5b0d62ca1e0b226b",
-    "re_review_sha256": "41aaa67e27cc76f4bd4549dc5f6f26fdbfb39e89e9d13b5c19fca2d5a4bcfce1",
-    "resolution_sha256": "40ca928829a3561484cbf526562e70386a4929d4e6b269d1820ff5cad63fdc99",
-    "scoring_gold_sha256": "8b1479b348431ebbf202e39b56f489ead3f5f608acf86bcfdd1ba8492faba96e"
+    "reviewer_a_sha256": "fed87f70ed43672beda597105b243fc3e020b028de8c6503060aa27878c27f92",
+    "reviewer_b_sha256": "e8d2c6226c600bd5f0f44847616d9e96f80ee1ae9ee16e53d50bf4645afce296",
+    "re_review_sha256": "7566a38c72e5f033cdfbd2fd071be8b01535e339ec521866b36cc3867eb623a5",
+    "resolution_sha256": "f2055cde66fda22a64df6c6ad3c70cbd73d8a727b85e6e4b1372aae8b1e7c89a",
+    "scoring_gold_sha256": "2346e0aab7c3c741835ef66cc892c296a93213a11d2ac1baf84580e29c7d6f7f"
   },
   "evaluator": {
     "version": "2.3.0",
@@ -62,29 +62,11 @@
     "timeout_seconds": 300,
     "per_invocation_max_usd": 1.0,
     "run_max_usd": 100.0,
-    "expected_call_count": 100
+    "expected_call_count": 40
   },
   "criterion_support": {
-    "functional_correctness": {
-      "sample_size": 13,
-      "status": "one-sided",
-      "calibration_claim": "one-sided-detection",
-      "decisive_sample_size": 1,
-      "production_decisive": false,
-      "production_policy": "tie-only-until-calibration-support-expands",
-      "canonical_counts": {
-        "A": 1,
-        "B": 0,
-        "tie": 12
-      },
-      "presented_counts": {
-        "A": 1,
-        "B": 1,
-        "tie": 24
-      }
-    },
-    "security_reliability": {
-      "sample_size": 13,
+    "factual_fidelity": {
+      "sample_size": 8,
       "status": "not-calibrated",
       "calibration_claim": "tie-discipline-only",
       "decisive_sample_size": 0,
@@ -93,70 +75,70 @@
       "canonical_counts": {
         "A": 0,
         "B": 0,
-        "tie": 13
+        "tie": 8
       },
       "presented_counts": {
         "A": 0,
         "B": 0,
-        "tie": 26
-      }
-    },
-    "maintainability_extensibility": {
-      "sample_size": 13,
-      "status": "bidirectional",
-      "calibration_claim": "bidirectional-discrimination",
-      "decisive_sample_size": 5,
-      "production_decisive": true,
-      "production_policy": "bidirectional-gold-support",
-      "canonical_counts": {
-        "A": 3,
-        "B": 2,
-        "tie": 8
-      },
-      "presented_counts": {
-        "A": 5,
-        "B": 5,
         "tie": 16
       }
     },
-    "performance_efficiency": {
-      "sample_size": 13,
+    "reader_clarity": {
+      "sample_size": 8,
       "status": "bidirectional",
       "calibration_claim": "bidirectional-discrimination",
-      "decisive_sample_size": 3,
+      "decisive_sample_size": 4,
       "production_decisive": true,
       "production_policy": "bidirectional-gold-support",
       "canonical_counts": {
         "A": 2,
-        "B": 1,
-        "tie": 10
+        "B": 2,
+        "tie": 4
       },
       "presented_counts": {
-        "A": 3,
-        "B": 3,
-        "tie": 20
+        "A": 4,
+        "B": 4,
+        "tie": 8
       }
     },
-    "simplicity_scope_discipline": {
-      "sample_size": 13,
-      "status": "one-sided",
-      "calibration_claim": "one-sided-detection",
-      "decisive_sample_size": 7,
-      "production_decisive": true,
-      "production_policy": "ab-ba-balanced-one-sided-support-at-least-five",
+    "audience_fit": {
+      "sample_size": 8,
+      "status": "not-calibrated",
+      "calibration_claim": "tie-discipline-only",
+      "decisive_sample_size": 0,
+      "production_decisive": false,
+      "production_policy": "tie-only-until-calibration-support-expands",
       "canonical_counts": {
         "A": 0,
-        "B": 7,
-        "tie": 6
+        "B": 0,
+        "tie": 8
       },
       "presented_counts": {
-        "A": 7,
-        "B": 7,
-        "tie": 12
+        "A": 0,
+        "B": 0,
+        "tie": 16
+      }
+    },
+    "concision": {
+      "sample_size": 8,
+      "status": "bidirectional",
+      "calibration_claim": "bidirectional-discrimination",
+      "decisive_sample_size": 4,
+      "production_decisive": true,
+      "production_policy": "bidirectional-gold-support",
+      "canonical_counts": {
+        "A": 2,
+        "B": 2,
+        "tie": 4
+      },
+      "presented_counts": {
+        "A": 4,
+        "B": 4,
+        "tie": 8
       }
     }
   },
-  "invocation_namespace_sha256": "12d2271abe4a3899998c98515df115583bb432fd99e51d0964f75fe25b98387e",
+  "invocation_namespace_sha256": "2fac8d703490f1657a2908a222ab1b17cea69f8ba863db4569e28376004c6576",
   "acceptance": {
     "minimum_outcome_balanced_accuracy": 0.8,
     "minimum_outcome_cohen_kappa": 0.8,
@@ -192,5 +174,5 @@
     "blocker": null
   },
   "gold_source": "scoring_gold",
-  "trust_boundary_note": "This release lock detects accidental artifact, frozen-baseline, prompt, schema, provider, and evaluator drift only when these release bytes and the executing code are trusted; it is not a signature and cannot prevent an attacker from forging JSON and recomputing every untrusted hash."
+  "trust_boundary_note": "This test-authority profile binds author-authored editorial fixture data to the shared comparator engine; it makes no independent-review claim and cannot authorize production or replace source, provider, spend, isolation, or holdout authority."
 }

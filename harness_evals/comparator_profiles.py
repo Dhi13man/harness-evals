@@ -15,10 +15,11 @@ from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Any, BinaryIO, Iterator, Mapping
 
-from . import comparator_calibration
+from . import comparator_calibration, plain_language_calibration
 
 
 BUILTIN_SOFTWARE_PROFILE_ID = "software-engineering-v2.3"
+BUILTIN_PLAIN_LANGUAGE_PROFILE_ID = "plain-language-revision-v1"
 MAX_PROFILE_DESCRIPTOR_BYTES = 64 * 1024
 MAX_PROFILE_RESOURCE_BYTES = 4 * 1024 * 1024
 MAX_PROFILE_ID_LENGTH = 128
@@ -34,6 +35,7 @@ _DATA_RESOURCE_KEYS = frozenset(
         "request_template",
         "response_schema",
         "evidence_schema",
+        "semantic_contract",
         "production_release",
         "test_release",
     }
@@ -44,8 +46,12 @@ _BUILTIN_RESOURCE_KEYS = _DATA_RESOURCE_KEYS | {
     "certifier",
 }
 _BUILTIN_PROFILE_PACKAGES: Mapping[str, Any] = MappingProxyType(
-    {BUILTIN_SOFTWARE_PROFILE_ID: comparator_calibration}
+    {
+        BUILTIN_SOFTWARE_PROFILE_ID: comparator_calibration,
+        BUILTIN_PLAIN_LANGUAGE_PROFILE_ID: plain_language_calibration,
+    }
 )
+BUILTIN_PROFILE_IDS = frozenset(_BUILTIN_PROFILE_PACKAGES)
 _LOCAL_ARTIFACT_RESOURCES = MappingProxyType(
     {
         "corpus_sha256": "manifest",
@@ -54,6 +60,7 @@ _LOCAL_ARTIFACT_RESOURCES = MappingProxyType(
         "request_template_sha256": "request_template",
         "response_schema_sha256": "response_schema",
         "evidence_schema_sha256": "evidence_schema",
+        "semantic_contract_sha256": "semantic_contract",
     }
 )
 
@@ -88,6 +95,7 @@ class ComparatorProfileAuthorityBinding:
     test_release_sha256: str
     certification_contract_sha256: str
     requires_live_certification: bool
+    authority_scope: str
     registry_sha256: str
 
 
@@ -190,7 +198,7 @@ def parse_profile_descriptor(
     }
     if set(value) != expected:
         raise ComparatorProfileError("profile descriptor fields are invalid")
-    if type(value["schema_version"]) is not int or value["schema_version"] != 1:
+    if type(value["schema_version"]) is not int or value["schema_version"] != 2:
         raise ComparatorProfileError("profile descriptor schema version is invalid")
     profile_id = value["id"]
     if (
@@ -214,13 +222,15 @@ def parse_profile_descriptor(
     ):
         raise ComparatorProfileError("profile engine contract is invalid")
     resource_map = value["resources"]
-    expected_resource_keys = (
-        _DATA_RESOURCE_KEYS if data_only else _BUILTIN_RESOURCE_KEYS
+    if not isinstance(resource_map, dict):
+        raise ComparatorProfileError("profile resource fields are invalid")
+    resource_keys = set(resource_map)
+    valid_resource_keys = (
+        resource_keys == _DATA_RESOURCE_KEYS
+        if data_only
+        else resource_keys in {_DATA_RESOURCE_KEYS, _BUILTIN_RESOURCE_KEYS}
     )
-    if (
-        not isinstance(resource_map, dict)
-        or set(resource_map) != expected_resource_keys
-    ):
+    if not valid_resource_keys:
         raise ComparatorProfileError("profile resource fields are invalid")
     parsed_resources = tuple(
         (name, _canonical_resource_path(resource_map[name], f"resources.{name}"))
@@ -240,7 +250,7 @@ def parse_profile_descriptor(
             "profile supported artifact kinds must be ['workspace_diff']"
         )
     return ComparatorProfileDescriptor(
-        schema_version=1,
+        schema_version=2,
         id=profile_id,
         version=version,
         engine_contract=engine_contract,
@@ -379,7 +389,7 @@ def _authority_binding(profile_id: str) -> ComparatorProfileAuthorityBinding:
     registry = _strict_json_object(registry_bytes, "profile authority registry")
     if (
         set(registry) != {"schema_version", "profiles"}
-        or registry["schema_version"] != 1
+        or registry["schema_version"] != 2
     ):
         raise ComparatorProfileError("profile authority registry fields are invalid")
     profiles = registry["profiles"]
@@ -402,8 +412,14 @@ def _authority_binding(profile_id: str) -> ComparatorProfileAuthorityBinding:
         "test_release_sha256",
         "certification_contract_sha256",
         "requires_live_certification",
+        "authority_scope",
     }
-    if set(profile) != expected or profile["requires_live_certification"] is not True:
+    if (
+        set(profile) != expected
+        or profile["requires_live_certification"] is not True
+        or not isinstance(profile["authority_scope"], str)
+        or profile["authority_scope"] not in {"production", "test"}
+    ):
         raise ComparatorProfileError("profile authority binding fields are invalid")
     digests = [
         profile["descriptor_sha256"],
@@ -424,6 +440,7 @@ def _authority_binding(profile_id: str) -> ComparatorProfileAuthorityBinding:
         test_release_sha256=digests[2],
         certification_contract_sha256=digests[3],
         requires_live_certification=True,
+        authority_scope=profile["authority_scope"],
         registry_sha256=hashlib.sha256(registry_bytes).hexdigest(),
     )
 
@@ -473,8 +490,22 @@ def _validate_release_resources(
             "request_template",
             "response_schema",
             "evidence_schema",
+            "semantic_contract",
         )
     }
+    semantic_contract = parsed["semantic_contract"]
+    compatible_engine_contracts = {
+        "software-change-comparator-v2.3": "eligibility-pareto-v1",
+        "eligibility-pareto-v1": "eligibility-pareto-v1",
+    }
+    if compatible_engine_contracts.get(
+        descriptor.engine_contract
+    ) != semantic_contract.get("engine_strategy") or semantic_contract.get(
+        "artifact_kinds"
+    ) != list(descriptor.supported_artifact_kinds):
+        raise ComparatorProfileError(
+            "profile descriptor differs from its semantic engine contract"
+        )
     reviews = _review_hashes(parsed["manifest"])
     release_ids: set[str] = set()
     release_contracts = (

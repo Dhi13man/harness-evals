@@ -40,6 +40,7 @@ def _artifacts() -> dict[str, str]:
     request_template = load_json(ROOT / "request-template.json")
     response_schema = load_json(ROOT / "response.schema.json")
     evidence_schema = load_json(ROOT / "evidence.schema.json")
+    semantic_contract = load_json(ROOT / "semantic-contract.json")
     holdout_plan_schema_path = PROJECT_ROOT / "holdout-plan.schema.json"
     holdout_plan_schema = load_json(holdout_plan_schema_path)
     reviews = review_artifact_hashes(manifest)
@@ -54,6 +55,7 @@ def _artifacts() -> dict[str, str]:
         ).hexdigest(),
         "response_schema_sha256": canonical_sha256(response_schema),
         "evidence_schema_sha256": canonical_sha256(evidence_schema),
+        "semantic_contract_sha256": canonical_sha256(semantic_contract),
         "holdout_plan_schema_sha256": canonical_sha256(holdout_plan_schema),
         "holdout_plan_schema_bytes_sha256": file_sha256(holdout_plan_schema_path),
         "reviewer_a_sha256": reviews["reviewer_a"],
@@ -137,7 +139,10 @@ def _release(*, test: bool) -> dict[str, Any]:
                 for pair in load_json(ROOT / "manifest.json")["pairs"]
             ),
         },
-        "criterion_support": criterion_support(load_json(ROOT / "manifest.json")),
+        "criterion_support": criterion_support(
+            load_json(ROOT / "manifest.json"),
+            load_json(ROOT / "semantic-contract.json"),
+        ),
         "invocation_namespace_sha256": hashlib.sha256(
             (
                 "software-engineering-comparator-test-namespace-v2.3"
@@ -194,31 +199,53 @@ def _write(path: Path, raw_bytes: bytes) -> None:
     path.write_bytes(raw_bytes)
 
 
+def _authority_entry(
+    profile_root: Path,
+    profile_id: str,
+    authority_scope: str,
+    production_release: bytes,
+    test_release: bytes,
+) -> dict[str, Any]:
+    return {
+        "id": profile_id,
+        "descriptor_sha256": file_sha256(profile_root / "profile.json"),
+        "production_release_sha256": hashlib.sha256(production_release).hexdigest(),
+        "test_release_sha256": hashlib.sha256(test_release).hexdigest(),
+        "certification_contract_sha256": file_sha256(
+            profile_root / "evidence.schema.json"
+        ),
+        "requires_live_certification": True,
+        "authority_scope": authority_scope,
+    }
+
+
 def main() -> None:
     production_release = _encoded(_release(test=False))
     test_release = _encoded(_release(test=True))
+    authority_path = PROJECT_ROOT / "harness_evals/comparator-profile-authority.json"
+    plain_root = PROJECT_ROOT / "harness_evals/plain_language_calibration"
+    profiles = [
+        _authority_entry(
+            ROOT,
+            "software-engineering-v2.3",
+            "production",
+            production_release,
+            test_release,
+        ),
+        _authority_entry(
+            plain_root,
+            "plain-language-revision-v1",
+            "test",
+            (plain_root / "release.json").read_bytes(),
+            (plain_root / "tests/test-release.json").read_bytes(),
+        ),
+    ]
     authority = _encoded(
-        {
-            "schema_version": 1,
-            "profiles": [
-                {
-                    "id": "software-engineering-v2.3",
-                    "descriptor_sha256": file_sha256(ROOT / "profile.json"),
-                    "production_release_sha256": hashlib.sha256(
-                        production_release
-                    ).hexdigest(),
-                    "test_release_sha256": hashlib.sha256(test_release).hexdigest(),
-                    "certification_contract_sha256": file_sha256(
-                        ROOT / "evidence.schema.json"
-                    ),
-                    "requires_live_certification": True,
-                }
-            ],
-        }
+        {"schema_version": 2, "profiles": sorted(profiles, key=lambda item: item["id"])}
     )
     _write(ROOT / "release.json", production_release)
     _write(ROOT / "tests" / "test-release.json", test_release)
-    _write(PROJECT_ROOT / "harness_evals/comparator-profile-authority.json", authority)
+    _write(authority_path, authority)
 
 
 if __name__ == "__main__":

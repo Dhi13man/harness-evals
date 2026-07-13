@@ -33,6 +33,7 @@ from harness_evals.comparator_runtime import (
 )
 
 from .holdout_plan import HoldoutPlan, HoldoutPlanError, load_holdout_plan
+from .comparator_profiles import BUILTIN_SOFTWARE_PROFILE_ID
 from .manifest import (
     CaseSpec,
     ComparisonSpec,
@@ -1691,21 +1692,25 @@ class EvalRunner:
         self._assert_manifest_integrity()
         self._assert_generator_execution_policy_integrity()
         self._assert_codex_provider_binding_integrity(verify_executable=True)
+        self._validate_holdout_selection_shape(
+            selection, allow_unsealed_holdout=allow_unsealed_holdout
+        )
+        runtime = None
+        if selection.split == "holdout":
+            if self.suite.evaluation_mode == "objective_only":
+                raise RunnerError(
+                    "objective-only holdout authority is not available in schema version 3"
+                )
+            runtime = self._load_comparator_runtime()
+            self._require_production_holdout_authority(runtime)
         cases, comparisons = self._selected(
             selection, allow_unsealed_holdout=allow_unsealed_holdout
         )
         self._assert_injected_fake_generator_admissible(selection, cases)
-        runtime = (
-            None
-            if self.suite.evaluation_mode == "objective_only"
-            else self._load_comparator_runtime()
-        )
+        if runtime is None and self.suite.evaluation_mode != "objective_only":
+            runtime = self._load_comparator_runtime()
         if selection.split == "holdout":
             assert runtime is not None
-            if not runtime.protocol_locks_valid:
-                raise RunnerError(
-                    "holdout execution requires an authority-bound comparator profile"
-                )
             self._assert_generator_release_authority(runtime)
         repository_commit = _git_commit(self.suite.repository_root)
         repository_dirty = _git_dirty(self.suite.repository_root)
@@ -2024,8 +2029,7 @@ class EvalRunner:
                 holdout_plan=self._holdout_plan,
                 release_authority_validated=(
                     runtime is not None
-                    and runtime.protocol_locks_valid
-                    and not runtime.bundle.release["test_release"]
+                    and runtime.production_authority_valid
                     and runtime.certification.valid
                     and runtime.certification.evidence_sha256 is not None
                 ),
@@ -2100,6 +2104,8 @@ class EvalRunner:
             raise RunnerError(
                 "objective-only holdout authority is not available in schema version 3"
             )
+        runtime = self._load_comparator_runtime()
+        self._require_production_holdout_authority(runtime)
         output = _new_external_plan_path(output_path, self.suite.root)
         consumption_record_path = _consumption_record_path_for_plan(output)
         _validate_consumption_record_target(
@@ -2410,6 +2416,13 @@ class EvalRunner:
             )
 
     @staticmethod
+    def _require_production_holdout_authority(runtime: ComparatorRuntime) -> None:
+        try:
+            runtime.require_production_authority()
+        except CalibrationError as exc:
+            raise RunnerError(str(exc)) from exc
+
+    @staticmethod
     def _assert_production_holdout_runtime(runtime: ComparatorRuntime) -> None:
         try:
             runtime.require_live_calibration()
@@ -2475,7 +2488,10 @@ class EvalRunner:
                 elif profile.kind == "builtin":
                     certification_root, certification_name = (
                         self._profile_certification_location(
-                            profile.id, legacy_compatible=True
+                            profile.id,
+                            legacy_compatible=(
+                                profile.id == BUILTIN_SOFTWARE_PROFILE_ID
+                            ),
                         )
                     )
                     self._comparator_runtime = ComparatorRuntime.load_builtin_profile(
@@ -2663,6 +2679,32 @@ class EvalRunner:
                 )
         return cases, comparisons
 
+    def _validate_holdout_selection_shape(
+        self,
+        selection: RunSelection,
+        *,
+        allow_unsealed_holdout: bool,
+    ) -> None:
+        if selection.split != "holdout":
+            return
+        if self.suite.evaluation_mode == "objective_only":
+            raise RunnerError(
+                "objective-only holdout authority is not available in schema version 3"
+            )
+        if allow_unsealed_holdout and selection.holdout_plan is not None:
+            raise RunnerError("holdout preparation cannot consume an existing plan")
+        if not allow_unsealed_holdout and selection.holdout_plan is None:
+            raise RunnerError("holdout execution requires an explicit holdout plan")
+        if selection.case_ids:
+            raise RunnerError("holdout execution forbids case filters")
+        if selection.seed is not None:
+            raise RunnerError("holdout execution forbids seed overrides")
+        if selection.comparison_ids != _HOLDOUT_COMPARISON_IDS:
+            raise RunnerError(
+                "holdout execution requires exactly the explicit comparisons "
+                + ", ".join(_HOLDOUT_COMPARISON_IDS)
+            )
+
     def _bind_holdout_plan(
         self,
         selection: RunSelection,
@@ -2692,17 +2734,14 @@ class EvalRunner:
                 "holdout plan manifest hash does not match exact suite bytes"
             )
         runtime = self._load_comparator_runtime()
+        self._require_production_holdout_authority(runtime)
         release_sha256 = runtime.release_summary["release_sha256"]
         if plan.comparator_release_sha256 != release_sha256:
             raise RunnerError(
                 "holdout plan comparator release hash does not match preflight"
             )
         evidence_sha256 = runtime.certification.evidence_sha256
-        if not runtime.bundle.release["test_release"] and (
-            not runtime.protocol_locks_valid
-            or not runtime.certification.valid
-            or evidence_sha256 is None
-        ):
+        if not runtime.certification.valid or evidence_sha256 is None:
             raise RunnerError(
                 "production holdout requires valid live comparator certification evidence"
             )
@@ -2777,8 +2816,7 @@ class EvalRunner:
             and runtime.certification.evidence_sha256 is None
         )
         evidence["production_release_authority_eligible"] = bool(
-            runtime.protocol_locks_valid
-            and not runtime.bundle.release["test_release"]
+            runtime.production_authority_valid
             and runtime.certification.valid
             and runtime.certification.evidence_sha256 is not None
             and self._production_generator_release_authoritative()

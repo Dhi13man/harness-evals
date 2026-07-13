@@ -48,6 +48,26 @@ CRITERIA = (
     "performance_efficiency",
     "simplicity_scope_discipline",
 )
+EXPECTED_ADMISSIBILITY = {
+    "eligible": "Every required behavior and hard constraint is satisfied.",
+    "ineligible": "At least one required behavior or hard constraint is violated.",
+    "unknown": "At least one requirement cannot be determined from supplied artifacts and none is proven violated.",
+}
+EXPECTED_OUTCOME_RULE = {
+    "eligible_vs_ineligible": "The eligible candidate wins.",
+    "both_eligible": "Apply Pareto comparison across material criterion decisions; criteria are applicable and scored only in this state.",
+    "criteria_not_applicable": "Use null criteria whenever either candidate is ineligible or unknown; the mechanical outcome uses eligibility only.",
+    "neither_or_unknown": "Return unqualified.",
+    "pareto": {
+        "only_a_and_ties": "A",
+        "only_b_and_ties": "B",
+        "all_ties": "tie",
+        "a_and_b": "tradeoff",
+    },
+}
+EVIDENCE_SCHEMA_CONTRACT_SHA256 = (
+    "61f2ece9cec3321d71c7babf0b3ab98ea949007bc07943aaf6c236a92f64d4e9"
+)
 OUTCOMES = ("A", "B", "tie", "tradeoff", "unqualified")
 REQUIREMENT_STATUSES = {"satisfied", "violated", "unknown"}
 ELIGIBILITY = {"eligible", "ineligible", "unknown"}
@@ -117,6 +137,7 @@ class Bundle:
     response_schema: dict[str, Any]
     evidence_schema: dict[str, Any]
     release: dict[str, Any]
+    semantic_contract: dict[str, Any]
 
 
 def _reject_constant(value: str) -> None:
@@ -175,6 +196,7 @@ def load_bundle(
         response_schema=load_json(resolved / "response.schema.json"),
         evidence_schema=load_json(resolved / "evidence.schema.json"),
         release=load_json(resolved / release_name),
+        semantic_contract=load_json(resolved / "semantic-contract.json"),
     )
     if bundle.release.get("test_release") is True and not allow_test_release:
         raise CalibrationError("test release requires explicit allow_test_release=True")
@@ -440,7 +462,11 @@ def derive_eligibility(checks: dict[str, str]) -> str:
     return "eligible"
 
 
-def derive_outcome(eligibility: dict[str, str], criteria: dict[str, str] | None) -> str:
+def derive_outcome(
+    eligibility: dict[str, str],
+    criteria: dict[str, str] | None,
+    criterion_ids: tuple[str, ...] = CRITERIA,
+) -> str:
     """Apply eligibility first, then Pareto comparison only when both are eligible."""
 
     if set(eligibility) != {"A", "B"} or not set(eligibility.values()) <= ELIGIBILITY:
@@ -465,7 +491,7 @@ def derive_outcome(eligibility: dict[str, str], criteria: dict[str, str] | None)
         return "unqualified"
     if (
         criteria is None
-        or set(criteria) != set(CRITERIA)
+        or set(criteria) != set(criterion_ids)
         or not set(criteria.values()) <= WINNERS
     ):
         raise CalibrationError(
@@ -486,6 +512,7 @@ def _label_set(
     value: Any,
     location: str,
     *,
+    semantic_contract: dict[str, Any],
     resolution: bool = False,
     legacy: bool = False,
 ) -> dict[str, Any]:
@@ -570,6 +597,7 @@ def _label_set(
             "violations": tuple(violations),
             "requirement_statuses": dict(sorted(requirement_statuses.items())),
         }
+    criterion_ids = tuple(semantic_contract["criterion_ids"])
     winners = data["criteria"]
     both_eligible = eligibility == {"A": "eligible", "B": "eligible"}
     criteria: dict[str, str] | None
@@ -577,13 +605,13 @@ def _label_set(
         criteria = None
     elif (
         isinstance(winners, list)
-        and len(winners) == len(CRITERIA)
+        and len(winners) == len(criterion_ids)
         and set(winners) <= WINNERS
     ):
-        criteria = dict(zip(CRITERIA, winners, strict=True))
+        criteria = dict(zip(criterion_ids, winners, strict=True))
     else:
         raise CalibrationError(
-            f"{location}.criteria must be null or five locked winners"
+            f"{location}.criteria must be null or the locked criterion winners"
         )
     if both_eligible and criteria is None:
         raise CalibrationError(
@@ -596,14 +624,15 @@ def _label_set(
     if (
         not legacy
         and criteria is not None
-        and criteria["performance_efficiency"] != "tie"
+        and semantic_contract["performance_criterion"] is not None
+        and criteria[semantic_contract["performance_criterion"]] != "tie"
         and not pair["contract"]["performance_basis"]
     ):
         raise CalibrationError(
             f"{location} claims a performance winner without a performance basis"
         )
     if not legacy and criteria is not None:
-        for criterion in ("functional_correctness", "security_reliability"):
+        for criterion in semantic_contract["qualitative_basis_criteria"]:
             if (
                 criteria[criterion] != "tie"
                 and criterion not in pair["contract"]["qualitative_bases"]
@@ -612,7 +641,7 @@ def _label_set(
                     f"{location} claims {criterion} without a typed qualitative basis"
                 )
     effective_criteria = criteria if both_eligible else None
-    outcome = derive_outcome(eligibility, effective_criteria)
+    outcome = derive_outcome(eligibility, effective_criteria, criterion_ids)
     return {
         "reviewer_id": reviewer_id,
         "eligibility": normalized_decisions,
@@ -654,7 +683,238 @@ def _same_semantic_labels(left: dict[str, Any], right: dict[str, Any]) -> bool:
     )
 
 
-def validate_rubric(rubric: dict[str, Any]) -> dict[str, Any]:
+def validate_semantic_contract(contract: dict[str, Any]) -> dict[str, Any]:
+    """Validate one profile-owned contract against closed engine strategies."""
+
+    _exact(
+        contract,
+        {
+            "schema_version",
+            "engine_strategy",
+            "request_adapter",
+            "response_adapter",
+            "evidence_adapter",
+            "artifact_kinds",
+            "criterion_ids",
+            "criterion_policy_values",
+            "performance_criterion",
+            "performance_basis_kinds",
+            "qualitative_basis_criteria",
+            "requirement_kinds",
+            "qualitative_basis_kinds",
+            "request_template_id",
+            "corpus_id",
+            "review_policy",
+            "calibration_policy",
+            "criterion_support_policy",
+        },
+        "semantic contract",
+    )
+    if contract["schema_version"] != 1:
+        raise CalibrationError("semantic contract schema version is invalid")
+    if contract["engine_strategy"] != "eligibility-pareto-v1":
+        raise CalibrationError("semantic contract engine strategy is unsupported")
+    if contract["request_adapter"] != "workspace-diff-v1":
+        raise CalibrationError("semantic contract request adapter is unsupported")
+    if contract["response_adapter"] != "requirement-vector-v1":
+        raise CalibrationError("semantic contract response adapter is unsupported")
+    if contract["evidence_adapter"] != "offline-trials-v2":
+        raise CalibrationError("semantic contract evidence adapter is unsupported")
+    if contract["artifact_kinds"] != ["workspace_diff"]:
+        raise CalibrationError("semantic contract artifact kinds are unsupported")
+
+    criterion_ids = contract["criterion_ids"]
+    if (
+        not isinstance(criterion_ids, list)
+        or not criterion_ids
+        or not all(
+            isinstance(value, str)
+            and re.fullmatch(r"[a-z0-9][a-z0-9_]*", value) is not None
+            for value in criterion_ids
+        )
+        or len(criterion_ids) != len(set(criterion_ids))
+    ):
+        raise CalibrationError("semantic contract criterion ids are invalid")
+    policy_values = contract["criterion_policy_values"]
+    allowed_policy_values = {
+        "tie-only-until-calibration-support-expands",
+        "decisive",
+        "decisive-when-typed-basis-exists",
+    }
+    if (
+        not isinstance(policy_values, list)
+        or not all(isinstance(value, str) for value in policy_values)
+        or len(policy_values) != len(set(policy_values))
+        or not set(policy_values) <= allowed_policy_values
+    ):
+        raise CalibrationError("semantic contract criterion policy values are invalid")
+
+    performance_criterion = contract["performance_criterion"]
+    if performance_criterion is not None and performance_criterion not in criterion_ids:
+        raise CalibrationError("semantic contract performance criterion is invalid")
+    performance_basis_kinds = contract["performance_basis_kinds"]
+    if (
+        not isinstance(performance_basis_kinds, list)
+        or not all(isinstance(value, str) for value in performance_basis_kinds)
+        or len(performance_basis_kinds) != len(set(performance_basis_kinds))
+        or not set(performance_basis_kinds) <= {"workload", "asymptotic", "measurement"}
+        or (performance_criterion is None and performance_basis_kinds)
+    ):
+        raise CalibrationError("semantic contract performance basis kinds are invalid")
+    qualitative_criteria = contract["qualitative_basis_criteria"]
+    if (
+        not isinstance(qualitative_criteria, list)
+        or not all(isinstance(value, str) for value in qualitative_criteria)
+        or len(qualitative_criteria) != len(set(qualitative_criteria))
+        or not set(qualitative_criteria) <= set(criterion_ids)
+    ):
+        raise CalibrationError("semantic contract qualitative criteria are invalid")
+    requirement_kinds = contract["requirement_kinds"]
+    if (
+        not isinstance(requirement_kinds, list)
+        or not requirement_kinds
+        or not all(isinstance(value, str) for value in requirement_kinds)
+        or len(requirement_kinds) != len(set(requirement_kinds))
+        or not set(requirement_kinds) <= {"required_behavior", "hard_constraint"}
+    ):
+        raise CalibrationError("semantic contract requirement kinds are invalid")
+    qualitative_kinds = contract["qualitative_basis_kinds"]
+    if (
+        not isinstance(qualitative_kinds, list)
+        or not all(isinstance(value, str) for value in qualitative_kinds)
+        or len(qualitative_kinds) != len(set(qualitative_kinds))
+        or not set(qualitative_kinds)
+        <= {
+            "test-fault-sensitivity",
+            "behavioral-quality",
+            "defense-in-depth",
+            "failure-determinism",
+            "concurrency-margin",
+            "source-fidelity",
+            "reader-comprehension",
+            "audience-alignment",
+        }
+        or (not qualitative_criteria and qualitative_kinds)
+    ):
+        raise CalibrationError("semantic contract qualitative basis kinds are invalid")
+    _text(contract["request_template_id"], "semantic contract request template id")
+    _text(contract["corpus_id"], "semantic contract corpus id")
+
+    review_policy = _exact(
+        contract["review_policy"],
+        {
+            "historical_rubric_version",
+            "effective_rubric_version",
+            "scoring_protocol_version",
+            "resolution_authority",
+        },
+        "semantic contract review policy",
+    )
+    for field, value in review_policy.items():
+        _text(value, f"semantic contract review policy {field}")
+
+    calibration = _exact(
+        contract["calibration_policy"],
+        {
+            "exact_pair_count",
+            "exact_outcome_count",
+            "exact_sentinel_outcome_count",
+            "allowed_languages",
+            "minimum_language_counts",
+            "minimum_combined_language_counts",
+            "minimum_categories",
+            "minimum_injection_probes",
+            "required_length_bias_kinds",
+        },
+        "semantic contract calibration policy",
+    )
+    for field in (
+        "exact_pair_count",
+        "exact_outcome_count",
+    ):
+        _integer(calibration[field], f"semantic contract {field}", 1)
+    for field in ("exact_sentinel_outcome_count", "minimum_injection_probes"):
+        _integer(calibration[field], f"semantic contract {field}", 0)
+    if (
+        calibration["exact_pair_count"]
+        != calibration["exact_outcome_count"] * len(OUTCOMES)
+        or calibration["exact_sentinel_outcome_count"]
+        > calibration["exact_outcome_count"]
+    ):
+        raise CalibrationError("semantic contract calibration counts are inconsistent")
+    allowed_languages = calibration["allowed_languages"]
+    if (
+        not isinstance(allowed_languages, list)
+        or not allowed_languages
+        or not all(isinstance(value, str) for value in allowed_languages)
+        or len(allowed_languages) != len(set(allowed_languages))
+        or not set(allowed_languages)
+        <= {"python", "javascript", "typescript", "go", "mixed", "text"}
+    ):
+        raise CalibrationError("semantic contract allowed languages are invalid")
+    for field in ("minimum_language_counts", "minimum_categories"):
+        values = calibration[field]
+        if not isinstance(values, dict):
+            raise CalibrationError(f"semantic contract {field} is invalid")
+        for key, value in values.items():
+            _text(key, f"semantic contract {field} key")
+            _integer(value, f"semantic contract {field}.{key}", 0)
+    if not set(calibration["minimum_language_counts"]) <= set(allowed_languages):
+        raise CalibrationError("semantic contract language minimum is unsupported")
+    combined = calibration["minimum_combined_language_counts"]
+    if not isinstance(combined, list):
+        raise CalibrationError("semantic contract combined language counts are invalid")
+    for index, raw_group in enumerate(combined):
+        group = _exact(
+            raw_group,
+            {"languages", "minimum"},
+            f"semantic contract combined language counts[{index}]",
+        )
+        if (
+            not isinstance(group["languages"], list)
+            or not group["languages"]
+            or not all(isinstance(value, str) for value in group["languages"])
+            or len(group["languages"]) != len(set(group["languages"]))
+            or not set(group["languages"]) <= set(allowed_languages)
+        ):
+            raise CalibrationError("semantic contract combined languages are invalid")
+        _integer(group["minimum"], "semantic contract combined minimum", 0)
+    length_bias = calibration["required_length_bias_kinds"]
+    if not isinstance(length_bias, dict) or not set(length_bias) <= {
+        "necessary",
+        "harmful",
+    }:
+        raise CalibrationError("semantic contract length-bias policy is invalid")
+    for kind, minimum in length_bias.items():
+        _integer(minimum, f"semantic contract length-bias {kind}", 0)
+
+    support = _exact(
+        contract["criterion_support_policy"],
+        {
+            "bidirectional_minimum_each_side",
+            "one_sided_decisive_minimum",
+            "one_sided_decisive_label",
+        },
+        "semantic contract criterion support policy",
+    )
+    for field in ("bidirectional_minimum_each_side", "one_sided_decisive_minimum"):
+        minimum = support[field]
+        _integer(minimum, f"semantic contract criterion support {field}", 1)
+    _text(
+        support["one_sided_decisive_label"],
+        "semantic contract one-sided decisive label",
+    )
+    return contract
+
+
+def _criterion_ids(semantic_contract: dict[str, Any]) -> tuple[str, ...]:
+    validate_semantic_contract(semantic_contract)
+    return tuple(semantic_contract["criterion_ids"])
+
+
+def validate_rubric(
+    rubric: dict[str, Any], semantic_contract: dict[str, Any]
+) -> dict[str, Any]:
     _exact(
         rubric,
         {
@@ -671,9 +931,19 @@ def validate_rubric(rubric: dict[str, Any]) -> dict[str, Any]:
     _text(rubric["rubric_id"], "rubric.rubric_id")
     if rubric["version"] != EVALUATOR_VERSION:
         raise CalibrationError("rubric version differs from evaluator version")
+    if (
+        rubric["admissibility"] != EXPECTED_ADMISSIBILITY
+        or rubric["outcome_rule"] != EXPECTED_OUTCOME_RULE
+    ):
+        raise CalibrationError(
+            "rubric engine semantics differ from the selected strategy"
+        )
+    criteria_ids = _criterion_ids(semantic_contract)
     criteria = rubric["criteria"]
-    if not isinstance(criteria, list) or [item.get("id") for item in criteria] != list(
-        CRITERIA
+    if (
+        not isinstance(criteria, list)
+        or not all(isinstance(item, dict) for item in criteria)
+        or [item.get("id") for item in criteria] != list(criteria_ids)
     ):
         raise CalibrationError("rubric criteria differ from the locked ordered set")
     for index, criterion in enumerate(criteria):
@@ -681,18 +951,26 @@ def validate_rubric(rubric: dict[str, Any]) -> dict[str, Any]:
         _text(criterion["definition"], f"rubric.criteria[{index}].definition", 20)
     policy = _exact(
         rubric["production_decisive_policy"],
-        set(CRITERIA),
+        set(criteria_ids),
         "rubric.production_decisive_policy",
     )
-    expected_policy = {
-        "functional_correctness": "tie-only-until-calibration-support-expands",
-        "security_reliability": "tie-only-until-calibration-support-expands",
-        "maintainability_extensibility": "decisive",
-        "performance_efficiency": "decisive-when-typed-basis-exists",
-        "simplicity_scope_discipline": "decisive",
+    if not all(isinstance(value, str) for value in policy.values()) or not set(
+        policy.values()
+    ) <= set(semantic_contract["criterion_policy_values"]):
+        raise CalibrationError("rubric production criterion policy is unsupported")
+    typed_policy = "decisive-when-typed-basis-exists"
+    typed_criteria = {
+        criterion for criterion, value in policy.items() if value == typed_policy
     }
-    if policy != expected_policy:
-        raise CalibrationError("rubric production criterion policy is stale")
+    expected_typed_criteria = (
+        {semantic_contract["performance_criterion"]}
+        if semantic_contract["performance_criterion"] is not None
+        else set()
+    )
+    if typed_criteria != expected_typed_criteria:
+        raise CalibrationError(
+            "rubric typed-basis policy differs from semantic contract"
+        )
     evidence = _exact(
         rubric["evidence"],
         {"minimum_observation_characters", "required_fields", "rule"},
@@ -717,9 +995,194 @@ def validate_rubric(rubric: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _without_schema_annotations(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _without_schema_annotations(item)
+            for key, item in value.items()
+            if key not in {"description", "title"}
+        }
+    if isinstance(value, list):
+        return [_without_schema_annotations(item) for item in value]
+    return value
+
+
+def _expected_response_schema(criterion_ids: tuple[str, ...]) -> dict[str, Any]:
+    evidence_ref = {"$ref": "#/$defs/evidence"}
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "response.schema.json",
+        "x-artifact-version": EVALUATOR_VERSION,
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["checks", "admissibility", "criteria"],
+        "properties": {
+            "checks": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["A", "B"],
+                "properties": {side: {"$ref": "#/$defs/checks"} for side in ("A", "B")},
+            },
+            "admissibility": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["A", "B"],
+                "properties": {
+                    side: {"$ref": "#/$defs/admissibilityDecision"}
+                    for side in ("A", "B")
+                },
+            },
+            "criteria": {
+                "oneOf": [
+                    {"type": "null"},
+                    {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": list(criterion_ids),
+                        "properties": {
+                            criterion: {"$ref": "#/$defs/criterion"}
+                            for criterion in criterion_ids
+                        },
+                    },
+                ]
+            },
+        },
+        "$defs": {
+            "evidence": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "artifact",
+                    "path",
+                    "line_start",
+                    "line_end",
+                    "quote",
+                    "semantic_anchor",
+                    "observation",
+                ],
+                "properties": {
+                    "artifact": {"enum": ["A", "B", "both", "contract"]},
+                    "path": {"type": "string", "minLength": 1},
+                    "line_start": {"type": "integer", "minimum": 1},
+                    "line_end": {"type": "integer", "minimum": 1},
+                    "quote": {"type": "string", "minLength": 3},
+                    "semantic_anchor": {
+                        "type": "string",
+                        "pattern": "^(requirement|criterion):[a-z0-9][a-z0-9_-]*:(satisfied|violated|unknown|A|B|tie)$",
+                    },
+                    "observation": {"type": "string", "minLength": 20},
+                },
+            },
+            "checks": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["requirement_id", "status", "evidence"],
+                    "properties": {
+                        "requirement_id": {
+                            "type": "string",
+                            "pattern": "^[a-z0-9][a-z0-9-]*$",
+                        },
+                        "status": {"enum": ["satisfied", "violated", "unknown"]},
+                        "evidence": evidence_ref,
+                    },
+                },
+            },
+            "admissibilityDecision": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["decision", "violation_ids"],
+                "properties": {
+                    "decision": {"enum": ["eligible", "ineligible", "unknown"]},
+                    "violation_ids": {
+                        "type": "array",
+                        "uniqueItems": True,
+                        "items": {
+                            "type": "string",
+                            "pattern": "^[a-z0-9][a-z0-9-]*$",
+                        },
+                    },
+                },
+            },
+            "criterion": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["winner", "evidence"],
+                "properties": {
+                    "winner": {"enum": ["A", "B", "tie"]},
+                    "evidence": evidence_ref,
+                },
+            },
+        },
+    }
+
+
+def _validate_manifest_schema_contract(
+    schema: dict[str, Any], semantic_contract: dict[str, Any]
+) -> None:
+    """Ensure profile data accepted by the parser is representable by its schema."""
+
+    try:
+        properties = schema["properties"]
+        definitions = schema["$defs"]
+        pair_schema = definitions["pair"]["properties"]
+        contract_schema = pair_schema["contract"]["properties"]
+        review_schema = properties["review_policy"]["properties"]
+        criteria_schemas = (
+            definitions["labelSet"]["properties"]["criteria"],
+            definitions["effectiveCriteria"]["oneOf"][1],
+        )
+        performance_variants = contract_schema["performance_basis"]["oneOf"]
+        performance_objects = [
+            value
+            for value in performance_variants
+            if isinstance(value, dict) and value.get("type") == "object"
+        ]
+        if len(performance_objects) != 1:
+            raise KeyError("performance basis object")
+        performance_kinds = performance_objects[0]["properties"]["kind"]["enum"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise CalibrationError(
+            "manifest schema semantic contract is malformed"
+        ) from exc
+
+    calibration = semantic_contract["calibration_policy"]
+    review = semantic_contract["review_policy"]
+    criterion_count = len(semantic_contract["criterion_ids"])
+    checks = (
+        properties["corpus_id"].get("const") == semantic_contract["corpus_id"],
+        all(
+            review_schema[field].get("const") == value
+            for field, value in review.items()
+        ),
+        properties["pairs"].get("minItems") == calibration["exact_pair_count"],
+        properties["pairs"].get("maxItems") == calibration["exact_pair_count"],
+        set(calibration["allowed_languages"])
+        == set(pair_schema["language"].get("enum", [])),
+        set(semantic_contract["requirement_kinds"])
+        == set(definitions["requirement"]["properties"]["kind"].get("enum", [])),
+        set(semantic_contract["performance_basis_kinds"]) == set(performance_kinds),
+        set(semantic_contract["qualitative_basis_criteria"])
+        == set(contract_schema["qualitative_bases"].get("properties", {})),
+        set(semantic_contract["qualitative_basis_kinds"])
+        == set(definitions["qualitativeBasis"]["properties"]["kind"].get("enum", [])),
+        all(
+            value.get("minItems") == criterion_count
+            and value.get("maxItems") == criterion_count
+            for value in criteria_schemas
+        ),
+    )
+    if not all(checks):
+        raise CalibrationError("manifest schema differs from semantic contract")
+
+
 def validate_locked_documents(bundle: Bundle) -> None:
     """Reject version or shape drift in the non-corpus locked documents."""
 
+    semantic_contract = validate_semantic_contract(bundle.semantic_contract)
+    criteria_ids = tuple(semantic_contract["criterion_ids"])
     manifest_schema = bundle.manifest_schema
     if (
         manifest_schema.get("$schema") != "https://json-schema.org/draft/2020-12/schema"
@@ -727,6 +1190,7 @@ def validate_locked_documents(bundle: Bundle) -> None:
         or manifest_schema.get("x-artifact-version") != EVALUATOR_VERSION
     ):
         raise CalibrationError("manifest schema identity or version is stale")
+    _validate_manifest_schema_contract(manifest_schema, semantic_contract)
     template = _exact(
         bundle.request_template,
         {
@@ -739,7 +1203,7 @@ def validate_locked_documents(bundle: Bundle) -> None:
         "request template",
     )
     if (
-        template["template_id"] != "software-engineering-comparator-request-v3"
+        template["template_id"] != semantic_contract["request_template_id"]
         or template["version"] != EVALUATOR_VERSION
         or template["serialization"] != "canonical-json-utf8-sort-keys-no-whitespace"
     ):
@@ -772,14 +1236,24 @@ def validate_locked_documents(bundle: Bundle) -> None:
             or schema.get("additionalProperties") is not False
         ):
             raise CalibrationError(f"{name} schema identity or version is stale")
+    if _without_schema_annotations(bundle.response_schema) != _expected_response_schema(
+        criteria_ids
+    ):
+        raise CalibrationError("response schema differs from response adapter contract")
+    if canonical_sha256(bundle.evidence_schema) != EVIDENCE_SCHEMA_CONTRACT_SHA256:
+        raise CalibrationError("evidence schema differs from evidence adapter contract")
 
 
 def validate_manifest(
-    manifest: dict[str, Any], rubric: dict[str, Any]
+    manifest: dict[str, Any],
+    rubric: dict[str, Any],
+    semantic_contract: dict[str, Any],
 ) -> dict[str, Any]:
     """Validate corpus structure, patches, labels, coverage, and adjudication state."""
 
-    validate_rubric(rubric)
+    semantic_contract = validate_semantic_contract(semantic_contract)
+    calibration_policy = semantic_contract["calibration_policy"]
+    validate_rubric(rubric, semantic_contract)
     _exact(
         manifest,
         {"$schema", "schema_version", "corpus_id", "review_policy", "pairs"},
@@ -787,7 +1261,7 @@ def validate_manifest(
     )
     if manifest["$schema"] != "manifest.schema.json" or manifest["schema_version"] != 2:
         raise CalibrationError("manifest schema lock is invalid")
-    if manifest["corpus_id"] != "software-engineering-comparator-v2":
+    if manifest["corpus_id"] != semantic_contract["corpus_id"]:
         raise CalibrationError("manifest corpus_id is invalid")
     review_policy = _exact(
         manifest["review_policy"],
@@ -800,17 +1274,19 @@ def validate_manifest(
         },
         "manifest.review_policy",
     )
-    if (
-        review_policy["historical_rubric_version"] != "2.0.0"
-        or review_policy["effective_rubric_version"] != "2.1.0"
-        or review_policy["scoring_protocol_version"] != EVALUATOR_VERSION
-        or review_policy["resolution_authority"] != "resolution-reviewer-v2"
+    expected_review_policy = semantic_contract["review_policy"]
+    if any(
+        review_policy[field] != expected_review_policy[field]
+        for field in expected_review_policy
     ):
         raise CalibrationError("manifest review policy is stale")
     _text(review_policy["history_rule"], "manifest.review_policy.history_rule", 40)
     pairs = manifest["pairs"]
-    if not isinstance(pairs, list) or len(pairs) < 30:
-        raise CalibrationError("manifest needs at least 30 distinct pairs")
+    if (
+        not isinstance(pairs, list)
+        or len(pairs) != calibration_policy["exact_pair_count"]
+    ):
+        raise CalibrationError("manifest pair count differs from semantic contract")
     pair_keys = {
         "id",
         "language",
@@ -850,13 +1326,7 @@ def validate_manifest(
         if ID_RE.fullmatch(pair_id) is None or pair_id in ids:
             raise CalibrationError(f"{location}.id is invalid or duplicated")
         ids.add(pair_id)
-        if pair["language"] not in {
-            "python",
-            "javascript",
-            "typescript",
-            "go",
-            "mixed",
-        }:
+        if pair["language"] not in set(calibration_policy["allowed_languages"]):
             raise CalibrationError(f"{location}.language is unsupported")
         languages[pair["language"]] += 1
         _text(pair["task"], f"{location}.task", 20)
@@ -905,7 +1375,7 @@ def validate_manifest(
                     f"{location} requirement id is invalid or duplicated"
                 )
             requirement_ids.add(requirement["id"])
-            if requirement["kind"] not in {"required_behavior", "hard_constraint"}:
+            if requirement["kind"] not in set(semantic_contract["requirement_kinds"]):
                 raise CalibrationError(f"{location} requirement kind is invalid")
             _text(requirement["text"], f"{location} requirement text", 20)
         performance_basis = contract["performance_basis"]
@@ -915,16 +1385,15 @@ def validate_manifest(
                 {"kind", "detail"},
                 f"{location}.performance_basis",
             )
-            if basis["kind"] not in {"workload", "asymptotic", "measurement"}:
+            if basis["kind"] not in set(semantic_contract["performance_basis_kinds"]):
                 raise CalibrationError(
                     f"{location}.performance_basis.kind is unsupported"
                 )
             _text(basis["detail"], f"{location}.performance_basis.detail", 20)
         qualitative_bases = contract["qualitative_bases"]
-        if not isinstance(qualitative_bases, dict) or not set(qualitative_bases) <= {
-            "functional_correctness",
-            "security_reliability",
-        }:
+        if not isinstance(qualitative_bases, dict) or not set(qualitative_bases) <= set(
+            semantic_contract["qualitative_basis_criteria"]
+        ):
             raise CalibrationError(f"{location}.qualitative_bases is invalid")
         for criterion, raw_basis in qualitative_bases.items():
             basis = _exact(
@@ -932,13 +1401,7 @@ def validate_manifest(
                 {"kind", "detail"},
                 f"{location}.qualitative_bases.{criterion}",
             )
-            if basis["kind"] not in {
-                "test-fault-sensitivity",
-                "behavioral-quality",
-                "defense-in-depth",
-                "failure-determinism",
-                "concurrency-margin",
-            }:
+            if basis["kind"] not in set(semantic_contract["qualitative_basis_kinds"]):
                 raise CalibrationError(
                     f"{location}.qualitative_bases.{criterion}.kind is unsupported"
                 )
@@ -1046,6 +1509,7 @@ def validate_manifest(
             pair,
             adjudication["reviewer_a"],
             f"{location}.reviewer_a",
+            semantic_contract=semantic_contract,
             legacy=True,
         )
         reviewer_ids.add(reviewer_a["reviewer_id"])
@@ -1073,7 +1537,11 @@ def validate_manifest(
             unresolved.append(pair_id)
             continue
         reviewer_b = _label_set(
-            pair, reviewer_b_raw, f"{location}.reviewer_b", legacy=True
+            pair,
+            reviewer_b_raw,
+            f"{location}.reviewer_b",
+            semantic_contract=semantic_contract,
+            legacy=True,
         )
         if reviewer_b["reviewer_id"] == reviewer_a["reviewer_id"]:
             raise CalibrationError(
@@ -1081,7 +1549,11 @@ def validate_manifest(
             )
         reviewer_ids.add(reviewer_b["reviewer_id"])
         re_review = _label_set(
-            pair, re_review_raw, f"{location}.re_review", legacy=True
+            pair,
+            re_review_raw,
+            f"{location}.re_review",
+            semantic_contract=semantic_contract,
+            legacy=True,
         )
         if re_review["reviewer_id"] == reviewer_a["reviewer_id"]:
             raise CalibrationError(
@@ -1097,6 +1569,7 @@ def validate_manifest(
             pair,
             resolution_raw,
             f"{location}.resolution",
+            semantic_contract=semantic_contract,
             resolution=True,
             legacy=True,
         )
@@ -1104,6 +1577,7 @@ def validate_manifest(
             pair,
             scoring_gold_raw,
             f"{location}.scoring_gold",
+            semantic_contract=semantic_contract,
             resolution=True,
         )
         if not _same_labels(reviewer_a, reviewer_b):
@@ -1139,30 +1613,48 @@ def validate_manifest(
             raise CalibrationError(
                 "injection probes must alternate sides and locations"
             )
+    required_length_bias = calibration_policy["required_length_bias_kinds"]
     if (
-        len(injection_sequence) < 6
-        or categories["length-bias"] < 5
-        or length_bias_kinds != {"necessary": 3, "harmful": 2}
-        or not {"A", "B"} <= set(length_bias_sides)
+        len(injection_sequence) < calibration_policy["minimum_injection_probes"]
+        or any(
+            length_bias_kinds[kind] < minimum
+            for kind, minimum in required_length_bias.items()
+        )
+        or (required_length_bias and not {"A", "B"} <= set(length_bias_sides))
     ):
         raise CalibrationError("corpus lacks balanced injection or length-bias probes")
-    if categories["identifier-preservation"] < 4 or categories["multi-file"] < 3:
-        raise CalibrationError("corpus lacks identifier or multi-file coverage")
-    if any(author_outcomes[outcome] != 6 for outcome in OUTCOMES):
-        raise CalibrationError("author outcomes must be balanced six per class")
-    if any(author_sentinel_outcomes[outcome] != 2 for outcome in OUTCOMES):
-        raise CalibrationError("historical sentinels must be balanced two per class")
-    if languages["go"] < 5 or languages["python"] < 5:
-        raise CalibrationError("corpus lacks required Go or Python breadth")
-    if languages["javascript"] + languages["typescript"] < 10:
-        raise CalibrationError("corpus lacks required JavaScript/TypeScript breadth")
+    if any(
+        categories[category] < minimum
+        for category, minimum in calibration_policy["minimum_categories"].items()
+    ):
+        raise CalibrationError("corpus lacks required category coverage")
+    outcome_count = calibration_policy["exact_outcome_count"]
+    sentinel_outcome_count = calibration_policy["exact_sentinel_outcome_count"]
+    if any(author_outcomes[outcome] != outcome_count for outcome in OUTCOMES):
+        raise CalibrationError("author outcomes differ from semantic contract")
+    if any(
+        author_sentinel_outcomes[outcome] != sentinel_outcome_count
+        for outcome in OUTCOMES
+    ):
+        raise CalibrationError("historical sentinels differ from semantic contract")
+    if any(
+        languages[language] < minimum
+        for language, minimum in calibration_policy["minimum_language_counts"].items()
+    ):
+        raise CalibrationError("corpus lacks required language breadth")
+    if any(
+        sum(languages[language] for language in group["languages"]) < group["minimum"]
+        for group in calibration_policy["minimum_combined_language_counts"]
+    ):
+        raise CalibrationError("corpus lacks required combined language breadth")
     adjudication_complete = not unresolved
     if adjudication_complete and any(
-        resolved_outcomes[outcome] != 6 for outcome in OUTCOMES
+        resolved_outcomes[outcome] != outcome_count for outcome in OUTCOMES
     ):
         raise CalibrationError("resolved outcomes must remain balanced six per class")
     if adjudication_complete and any(
-        resolved_sentinel_outcomes[outcome] != 2 for outcome in OUTCOMES
+        resolved_sentinel_outcomes[outcome] != sentinel_outcome_count
+        for outcome in OUTCOMES
     ):
         raise CalibrationError("resolved sentinels must remain balanced two per class")
     return {
@@ -1193,7 +1685,7 @@ def validate_manifest(
         "re_review_disagreements": re_review_disagreements,
         "status_expansion_pairs": status_expansion_pairs,
         "reviewer_ids": sorted(reviewer_ids),
-        "criterion_support": criterion_support(manifest),
+        "criterion_support": criterion_support(manifest, semantic_contract),
     }
 
 
@@ -1217,20 +1709,24 @@ def review_artifact_hashes(manifest: dict[str, Any]) -> dict[str, str]:
     }
 
 
-def criterion_support(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def criterion_support(
+    manifest: dict[str, Any], semantic_contract: dict[str, Any]
+) -> dict[str, dict[str, Any]]:
     """Describe canonical semantic support separately from AB/BA presentation."""
 
-    counts = {criterion: Counter() for criterion in CRITERIA}
+    criteria_ids = _criterion_ids(semantic_contract)
+    support_policy = semantic_contract["criterion_support_policy"]
+    counts = {criterion: Counter() for criterion in criteria_ids}
     sample_size = 0
     for pair in manifest["pairs"]:
         resolution = pair["adjudication"].get("resolution")
         if not isinstance(resolution, dict) or resolution.get("criteria") is None:
             continue
         sample_size += 1
-        for criterion, winner in zip(CRITERIA, resolution["criteria"], strict=True):
+        for criterion, winner in zip(criteria_ids, resolution["criteria"], strict=True):
             counts[criterion][winner] += 1
     support: dict[str, dict[str, Any]] = {}
-    for criterion in CRITERIA:
+    for criterion in criteria_ids:
         canonical_counts = {
             winner: counts[criterion][winner] for winner in ("A", "B", "tie")
         }
@@ -1243,8 +1739,16 @@ def criterion_support(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
             else "one-sided"
         )
         decisive_samples = canonical_counts["A"] + canonical_counts["B"]
-        production_decisive = status == "bidirectional" or (
-            status == "one-sided" and decisive_samples >= 5
+        production_decisive = (
+            status == "bidirectional"
+            and all(
+                canonical_counts[side]
+                >= support_policy["bidirectional_minimum_each_side"]
+                for side in ("A", "B")
+            )
+        ) or (
+            status == "one-sided"
+            and decisive_samples >= support_policy["one_sided_decisive_minimum"]
         )
         support[criterion] = {
             "sample_size": sample_size,
@@ -1259,7 +1763,7 @@ def criterion_support(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
             "production_policy": (
                 "bidirectional-gold-support"
                 if status == "bidirectional"
-                else "ab-ba-balanced-one-sided-support-at-least-five"
+                else support_policy["one_sided_decisive_label"]
                 if production_decisive
                 else "tie-only-until-calibration-support-expands"
             ),
@@ -1281,7 +1785,7 @@ def _validate_release(
 ) -> dict[str, Any]:
     """Verify the trusted release lock against current canonical artifacts."""
 
-    validate_rubric(bundle.rubric)
+    validate_rubric(bundle.rubric, bundle.semantic_contract)
     validate_locked_documents(bundle)
     release = _exact(
         bundle.release,
@@ -1318,6 +1822,7 @@ def _validate_release(
             "system_prompt_sha256",
             "response_schema_sha256",
             "evidence_schema_sha256",
+            "semantic_contract_sha256",
             "holdout_plan_schema_sha256",
             "holdout_plan_schema_bytes_sha256",
             "reviewer_a_sha256",
@@ -1340,6 +1845,7 @@ def _validate_release(
         ).hexdigest(),
         "response_schema_sha256": canonical_sha256(bundle.response_schema),
         "evidence_schema_sha256": canonical_sha256(bundle.evidence_schema),
+        "semantic_contract_sha256": canonical_sha256(bundle.semantic_contract),
         "reviewer_a_sha256": reviews["reviewer_a"],
         "reviewer_b_sha256": reviews["reviewer_b"],
         "re_review_sha256": reviews["re_review"],
@@ -1469,7 +1975,7 @@ def _validate_release(
     namespace = release["invocation_namespace_sha256"]
     if not isinstance(namespace, str) or HASH_RE.fullmatch(namespace) is None:
         raise CalibrationError("release invocation namespace is invalid")
-    support = criterion_support(bundle.manifest)
+    support = criterion_support(bundle.manifest, bundle.semantic_contract)
     if release["criterion_support"] != support:
         raise CalibrationError("release criterion support declaration is stale")
     rubric_policy = bundle.rubric["production_decisive_policy"]
@@ -2030,6 +2536,8 @@ def validate_response(
 
     if order not in {"AB", "BA"}:
         raise CalibrationError("response order is invalid")
+    semantic_contract = validate_semantic_contract(bundle.semantic_contract)
+    criterion_ids = tuple(semantic_contract["criterion_ids"])
     data = _exact(response, {"checks", "admissibility", "criteria"}, "response")
     minimum = bundle.rubric["evidence"]["minimum_observation_characters"]
     canonical_artifacts = {
@@ -2125,9 +2633,11 @@ def validate_response(
         presented_violations[side] = derived_violations
     presented_criteria: dict[str, str] | None = None
     if presented_eligibility == {"A": "eligible", "B": "eligible"}:
-        criteria_data = _exact(data["criteria"], set(CRITERIA), "response.criteria")
+        criteria_data = _exact(
+            data["criteria"], set(criterion_ids), "response.criteria"
+        )
         presented_criteria = {}
-        for criterion in CRITERIA:
+        for criterion in criterion_ids:
             decision = _exact(
                 criteria_data[criterion],
                 {"winner", "evidence"},
@@ -2184,14 +2694,16 @@ def validate_response(
             if presented_criteria is not None
             else None
         )
+    performance_criterion = semantic_contract["performance_criterion"]
     unsupported_performance = bool(
         criteria is not None
-        and criteria["performance_efficiency"] != "tie"
+        and performance_criterion is not None
+        and criteria[performance_criterion] != "tie"
         and pair["contract"]["performance_basis"] is None
     )
     unsupported_qualitative = tuple(
         criterion
-        for criterion in ("functional_correctness", "security_reliability")
+        for criterion in semantic_contract["qualitative_basis_criteria"]
         if criteria is not None
         and criteria[criterion] != "tie"
         and criterion not in pair["contract"]["qualitative_bases"]
@@ -2203,7 +2715,7 @@ def validate_response(
         "criteria": criteria,
         "unsupported_performance": unsupported_performance,
         "unsupported_qualitative": unsupported_qualitative,
-        "outcome": derive_outcome(eligibility, criteria),
+        "outcome": derive_outcome(eligibility, criteria, criterion_ids),
     }
 
 
@@ -2296,7 +2808,10 @@ def evaluate_evidence(
             **release_summary,
             "external_bindings_validated": external_bindings_validated,
         }
-    manifest_summary = validate_manifest(bundle.manifest, bundle.rubric)
+    manifest_summary = validate_manifest(
+        bundle.manifest, bundle.rubric, bundle.semantic_contract
+    )
+    criterion_ids = _criterion_ids(bundle.semantic_contract)
     _exact(
         evidence,
         {
@@ -2661,8 +3176,12 @@ def evaluate_evidence(
     observed_requirement_statuses: list[str] = []
     expected_violation_sets: list[tuple[str, ...]] = []
     observed_violation_sets: list[tuple[str, ...] | str] = []
-    expected_criteria: dict[str, list[str]] = {criterion: [] for criterion in CRITERIA}
-    observed_criteria: dict[str, list[str]] = {criterion: [] for criterion in CRITERIA}
+    expected_criteria: dict[str, list[str]] = {
+        criterion: [] for criterion in criterion_ids
+    }
+    observed_criteria: dict[str, list[str]] = {
+        criterion: [] for criterion in criterion_ids
+    }
     critical_failures: list[str] = []
     eligibility_errors: list[dict[str, Any]] = []
     requirement_status_errors: list[dict[str, Any]] = []
@@ -2680,6 +3199,7 @@ def evaluate_evidence(
             pair,
             raw_gold,
             f"pair {pair['id']} gold",
+            semantic_contract=bundle.semantic_contract,
             resolution=gold_field in {"resolution", "scoring_gold"},
         )
         repetitions = [
@@ -2757,7 +3277,7 @@ def evaluate_evidence(
                     )
                     pair_has_admissibility_error = True
         if gold["criteria"] is not None:
-            for criterion in CRITERIA:
+            for criterion in criterion_ids:
                 expected_criteria[criterion].append(gold["criteria"][criterion])
                 observed_criteria[criterion].append(
                     observed["criteria"][criterion]
@@ -2808,7 +3328,7 @@ def evaluate_evidence(
                 "balanced_accuracy": 0.0,
                 "cohen_kappa": 0.0,
             }
-            for criterion in CRITERIA
+            for criterion in criterion_ids
         }
     else:
         outcome_ba = _balanced_accuracy(expected_outcomes, observed_outcomes)
@@ -2843,7 +3363,7 @@ def evaluate_evidence(
                     expected_criteria[criterion], observed_criteria[criterion]
                 ),
             }
-            for criterion in CRITERIA
+            for criterion in criterion_ids
         }
     acceptance = bundle.release["acceptance"]
     gates = {
@@ -2945,7 +3465,9 @@ def main(argv: list[str] | None = None) -> int:
             allow_test_release=args.allow_test_release,
         )
         release = validate_release(bundle)
-        manifest = validate_manifest(bundle.manifest, bundle.rubric)
+        manifest = validate_manifest(
+            bundle.manifest, bundle.rubric, bundle.semantic_contract
+        )
         result = (
             evaluate_evidence(bundle, load_json(args.evidence))
             if args.evidence

@@ -93,7 +93,7 @@ PR 1 establishes package-safe profile identity and comparator absence. PR 2 make
 - A profile descriptor owns its criteria, response schema, request contract, calibration corpus, supported artifact kinds, acceptance policy, certification contract, and versioned digests.
 - The trusted packaged engine interprets profile data without importing suite code or accepting a suite-supplied executable engine.
 - The bundled software profile preserves the v0.2 rubric, request/response schemas, corpus, acceptance policy, and golden canonical request/evidence bytes while declaring only `workspace_diff` support; engine and release-lock digests version normally when pinned implementation sources change.
-- A minimal non-engineering suite runs judged comparison through an independently calibrated packaged profile registered for test authority without inheriting software-change criteria; an equivalent unregistered suite-local profile remains diagnostic-only.
+- A minimal non-engineering suite runs judged comparison through an author-authored packaged fixture profile registered for test authority without inheriting software-change criteria or making an independent production-calibration claim; an equivalent unregistered suite-local profile remains diagnostic-only.
 - Unknown criteria, unsupported artifact kinds, response-schema drift, corpus drift, certification drift, and release/profile substitution fail before comparator dispatch.
 - The known-good production-sandbox smoke and profile calibration suite pass in this PR.
 

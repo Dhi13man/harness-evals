@@ -208,7 +208,10 @@
               "const": "builtin"
             },
             "id": {
-              "const": "software-engineering-v2.3"
+              "enum": [
+                "software-engineering-v2.3",
+                "plain-language-revision-v1"
+              ]
             }
           }
         },
@@ -633,7 +636,7 @@
             "required": ["id", "kind", "text"],
             "properties": {
               "id": {"$ref": "#/$defs/identifier"},
-              "kind": {"enum": ["required_behavior", "hard_constraint"]},
+              "kind": {"$ref": "#/$defs/identifier"},
               "text": {"type": "string", "minLength": 20}
             }
           }
@@ -646,7 +649,7 @@
               "additionalProperties": false,
               "required": ["kind", "detail"],
               "properties": {
-                "kind": {"enum": ["workload", "asymptotic", "measurement"]},
+                "kind": {"$ref": "#/$defs/identifier"},
                 "detail": {"type": "string", "minLength": 20}
               }
             }
@@ -654,11 +657,8 @@
         },
         "qualitative_bases": {
           "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "functional_correctness": {"$ref": "#/$defs/qualitativeBasis"},
-            "security_reliability": {"$ref": "#/$defs/qualitativeBasis"}
-          }
+          "propertyNames": {"$ref": "#/$defs/identifier"},
+          "additionalProperties": {"$ref": "#/$defs/qualitativeBasis"}
         }
       }
     },
@@ -667,15 +667,7 @@
       "additionalProperties": false,
       "required": ["kind", "detail"],
       "properties": {
-        "kind": {
-          "enum": [
-            "test-fault-sensitivity",
-            "behavioral-quality",
-            "defense-in-depth",
-            "failure-determinism",
-            "concurrency-margin"
-          ]
-        },
+        "kind": {"$ref": "#/$defs/identifier"},
         "detail": {"type": "string", "minLength": 20}
       }
     },

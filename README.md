@@ -6,7 +6,7 @@ Harness Evals is an open source system for running reproducible A/B evaluations 
 
 A suite defines its own skill identifiers, tasks, fixtures, verifiers, and comparison arms. The included engineering and testing tracks are the first reference corpus, not the evaluator's domain boundary; suites may target any `skills/<id>/SKILL.md` bundle with cases that exercise its observable behavior. Harness integrations live behind provider adapters.
 
-Version `0.2.0` is an alpha release for expert evaluation work on Linux. The public corpus contains train and validation cases, not a private holdout, and the repository does not ship live comparator certification evidence or claim that one harness or bundle is superior. The bundled blinded comparator is calibrated for software-change evidence; suites in other domains should use objective case verifiers or contribute a separately calibrated comparator profile rather than reusing that rubric without validation.
+Version `0.2.0` is an alpha release for expert evaluation work on Linux. The public corpus contains train and validation cases, not a private holdout, and the repository does not ship live comparator certification evidence or claim that one harness or bundle is superior. The production-authority blinded comparator is calibrated for software-change evidence. A test-authority plain-language profile proves that non-engineering semantics can use the shared engine, but its corpus is an author-authored fixture rather than independent production calibration. Other domains should use objective case verifiers or contribute a separately calibrated comparator profile rather than reusing either rubric without validation.
 
 ## What Is Included
 
@@ -122,6 +122,30 @@ Built-in profiles resolve from installed package resources through a code-owned 
 A suite-local profile uses `{"kind": "suite_local", "path": "profiles/example"}`. Its path must be canonical, contained, and free of symlinks. Its descriptor may declare only data resources; calibration, collection, certification, and comparison code always come from the installed package. A suite-local profile cannot reuse a built-in ID, claim registry authority, prepare or consume a holdout, or authorize a release, even when all of its internal hashes and certification evidence are self-consistent.
 
 Packaged built-in profiles preserve the legacy certification location at `harness_evals/comparator_calibration/evidence/` when that checkout layout exists. An external installed-package suite uses `comparator-evidence/<profile-id>/certification.json`; the certification's `evidence_path` is relative to that same profile-specific directory. Certification and evidence files are enforced as owner-only regular files. Their existing non-symlink parent directory should be mode `0700`; directory permissions remain the suite operator's responsibility.
+
+#### Semantic Contracts And Authority
+
+Every profile release binds a strict `semantic-contract.json` alongside its rubric, corpus, request template, response schema, evidence schema, and release metadata. The semantic contract selects a reviewed closed engine strategy and adapters, then owns criterion IDs, requirement kinds, qualitative and performance basis vocabularies, corpus identity, calibration policy, and criterion-support thresholds. Suite case contracts are parsed against the selected profile's immutable vocabulary; the more general JSON schema validates their structure without hard-coding one domain's criterion names.
+
+Profiles do not supply executable evaluator code. Engine strategies and adapters remain an explicit allowlist in the installed package, so a data profile cannot introduce an import path, expression language, or arbitrary parser. Adding a new semantic shape that the closed engine cannot represent requires a normal reviewed code contribution.
+
+Authority is separate from internal hash consistency:
+
+- `software-engineering-v2.3` is registered with production scope, but production judgment and holdout access still require exact external source bindings and fresh live certification.
+- `plain-language-revision-v1` is registered with test scope. It exercises four non-engineering criteria, balanced AB/BA outcomes, prompt-injection probes, length-bias probes, package loading, and shared-engine judgment, but it cannot load a production release, prepare or consume a holdout, or authorize a claim.
+- Suite-local profiles are diagnostic data. They can execute public judged evaluations through the shared engine, but have no registry authority and cannot cross a production holdout boundary.
+
+The runner checks code-owned scope, non-test release status, exact external bindings, and certification independently. Test scope, a test release, missing registry authority, or stale external bindings each fail closed before protected holdout cases, sources, plans, outputs, spend ledgers, or providers are reached.
+
+#### Adding A Comparator Profile
+
+1. Define a data-only descriptor and semantic contract using an existing closed engine strategy and adapters.
+2. Provide a strict corpus schema, rubric, request template, response schema, evidence schema, balanced adjudicated corpus, and explicit production and test release locks.
+3. Preserve review provenance honestly. Author-authored fixture labels are acceptable for test authority but must not be described as independent calibration.
+4. Calibrate every decisive criterion with the semantic support required by the contract, not merely AB/BA presentation balance. Unsupported criteria must remain tie-only.
+5. Include outcome sentinels, adversarial instruction probes, length-bias coverage, malformed-resource tests, cross-profile substitution tests, and a grounded end-to-end judgment test.
+6. Prove both release files and the authority registry reproduce byte-for-byte, then inspect wheel and sdist contents and load the runtime from a clean installed environment.
+7. Register a built-in ID or grant production scope only through code review. A self-consistent suite-local profile never promotes itself.
 
 ## Adding A Case
 

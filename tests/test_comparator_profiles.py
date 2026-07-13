@@ -11,8 +11,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 import harness_evals as harness_package
-from harness_evals import comparator_calibration
+from harness_evals import comparator_calibration, comparator_profiles
 from harness_evals.comparator_profiles import (
+    BUILTIN_PLAIN_LANGUAGE_PROFILE_ID,
+    BUILTIN_PROFILE_IDS,
     BUILTIN_SOFTWARE_PROFILE_ID,
     MAX_PROFILE_DESCRIPTOR_BYTES,
     ComparatorProfileError,
@@ -83,6 +85,36 @@ class ComparatorProfileTests(unittest.TestCase):
                 hashlib.sha256(profile.read_bytes(release_name)).hexdigest(),
                 expected_digest,
             )
+
+    def test_plain_language_profile_has_test_authority_only(self) -> None:
+        self.assertEqual(
+            BUILTIN_PROFILE_IDS,
+            {BUILTIN_SOFTWARE_PROFILE_ID, BUILTIN_PLAIN_LANGUAGE_PROFILE_ID},
+        )
+        profile = resolve_builtin_profile(BUILTIN_PLAIN_LANGUAGE_PROFILE_ID)
+        self.assertEqual(profile.authority_binding.authority_scope, "test")
+        self.assertNotIn("calibration_engine", profile.descriptor.resources_by_name)
+        runtime = ComparatorRuntime.load_builtin_profile(
+            BUILTIN_PLAIN_LANGUAGE_PROFILE_ID, use_test_release=True
+        )
+        try:
+            self.assertEqual(
+                tuple(runtime.bundle.semantic_contract["criterion_ids"]),
+                (
+                    "factual_fidelity",
+                    "reader_clarity",
+                    "audience_fit",
+                    "concision",
+                ),
+            )
+            self.assertEqual(
+                runtime.release_summary["execution_limits"]["expected_call_count"],
+                40,
+            )
+        finally:
+            runtime.close()
+        with self.assertRaisesRegex(CalibrationError, "not authorized for production"):
+            ComparatorRuntime.load_builtin_profile(BUILTIN_PLAIN_LANGUAGE_PROFILE_ID)
 
     def test_materialized_profile_contains_only_snapshotted_resources(self) -> None:
         profile = resolve_builtin_profile(BUILTIN_SOFTWARE_PROFILE_ID)
@@ -198,6 +230,28 @@ class ComparatorProfileTests(unittest.TestCase):
         ):
             resolve_builtin_profile("unknown-v1")
 
+    def test_authority_scope_rejects_non_string_values_cleanly(self) -> None:
+        registry = json.loads(
+            (
+                Path(harness_package.__file__).parent
+                / "comparator-profile-authority.json"
+            ).read_text(encoding="utf-8")
+        )
+        for malformed in ({}, []):
+            with self.subTest(malformed=malformed):
+                payload = json.loads(json.dumps(registry))
+                payload["profiles"][0]["authority_scope"] = malformed
+                with (
+                    patch(
+                        "harness_evals.comparator_profiles._read_resource_bytes",
+                        return_value=self.encode(payload),
+                    ),
+                    self.assertRaisesRegex(
+                        ComparatorProfileError, "authority binding fields"
+                    ),
+                ):
+                    comparator_profiles._authority_binding(payload["profiles"][0]["id"])
+
     def test_descriptor_and_each_declared_resource_are_drift_sensitive(self) -> None:
         profile = resolve_builtin_profile(BUILTIN_SOFTWARE_PROFILE_ID)
         with tempfile.TemporaryDirectory() as temporary:
@@ -245,6 +299,26 @@ class ComparatorProfileTests(unittest.TestCase):
                 self.assertRaisesRegex(ComparatorProfileError, "lock is stale"),
             ):
                 resolve_builtin_profile(BUILTIN_SOFTWARE_PROFILE_ID)
+
+    def test_descriptor_and_semantic_contract_must_agree(self) -> None:
+        for field, value in (
+            ("engine_strategy", "unknown-strategy-v1"),
+            ("artifact_kinds", ["final_output_text"]),
+        ):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as temporary:
+                root = self.copied_profile_root(Path(temporary))
+                contract_path = root / "semantic-contract.json"
+                contract = json.loads(contract_path.read_bytes())
+                contract[field] = value
+                contract_path.write_text(json.dumps(contract), encoding="utf-8")
+
+                with (
+                    self.profile_files_patch(root),
+                    self.assertRaisesRegex(
+                        ComparatorProfileError, "semantic engine contract"
+                    ),
+                ):
+                    resolve_builtin_profile(BUILTIN_SOFTWARE_PROFILE_ID)
 
     def test_symlinked_resource_fails_during_bounded_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
