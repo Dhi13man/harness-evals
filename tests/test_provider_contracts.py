@@ -26,6 +26,11 @@ sys.path.insert(0, str(HARNESS_ROOT))
 
 from harness_evals.holdout_plan import HoldoutPlanError, load_holdout_plan  # noqa: E402
 from harness_evals.manifest import ManifestError, load_suite  # noqa: E402
+from harness_evals.provider_capabilities import (  # noqa: E402
+    ProviderCapabilityError,
+    capabilities_for,
+    reviewed_capabilities,
+)
 from harness_evals.providers import (  # noqa: E402
     ComparatorRequest,
     ComparatorResult,
@@ -138,6 +143,34 @@ class ProviderResultContractTests(unittest.TestCase):
             ProviderExecutionPolicy("concurrent", False)
         with self.assertRaisesRegex(ValueError, "unsupported"):
             ProviderExecutionPolicy("concurrent", 1)  # type: ignore[arg-type]
+
+    def test_reviewed_adapter_capabilities_are_canonical_and_role_closed(self) -> None:
+        registry = reviewed_capabilities()
+        self.assertEqual(
+            set(registry),
+            {"claude-cli", "codex-app-server", "deterministic-fake"},
+        )
+        self.assertEqual(
+            len({capabilities.sha256 for capabilities in registry.values()}), 3
+        )
+        for adapter_id, capabilities in registry.items():
+            with self.subTest(adapter_id=adapter_id):
+                self.assertEqual(capabilities.adapter_id, adapter_id)
+                self.assertEqual(
+                    capabilities.sha256, canonical_sha256(capabilities.as_json())
+                )
+                self.assertEqual(capabilities.artifact_outputs, ("workspace_diff",))
+        self.assertEqual(
+            capabilities_for("claude-cli", role="comparison").authority_scope,
+            "production",
+        )
+        self.assertEqual(capabilities_for("deterministic-fake").authority_scope, "test")
+        with self.assertRaisesRegex(ProviderCapabilityError, "comparison role"):
+            capabilities_for("codex-app-server", role="comparison")
+        with self.assertRaisesRegex(ProviderCapabilityError, "unknown reviewed"):
+            capabilities_for("suite-claimed-production")
+        with self.assertRaises(TypeError):
+            registry["forged"] = registry["claude-cli"]  # type: ignore[index]
 
 
 class ComparatorResultContractTests(unittest.TestCase):
@@ -1014,6 +1047,37 @@ class HoldoutProviderContractTests(unittest.TestCase):
         objective_without_policy = copy.deepcopy(objective)
         objective_without_policy.pop("objective_acceptance_policy_sha256")
         self.assert_schema_and_parser_reject(objective_without_policy)
+
+        adapter_binding = {
+            "adapter_id": "deterministic-fake",
+            "authority_scope": "test",
+            "binding_sha256": "7" * 64,
+            "capability_sha256": "8" * 64,
+            "config_sha256": "9" * 64,
+            "contract_revision": 1,
+            "role": "generation",
+            "runtime_provenance_sha256": "a" * 64,
+        }
+        version_four = copy.deepcopy(payload)
+        version_four["schema_version"] = 4
+        version_four["generator_adapter_binding"] = adapter_binding
+        version_four["comparator_adapter_binding"] = {
+            **adapter_binding,
+            "role": "comparison",
+        }
+        self.assertFalse(
+            list(Draft202012Validator(self.schema).iter_errors(version_four))
+        )
+        self.save(version_four)
+        version_four_plan = load_holdout_plan(self.path)
+        self.assertEqual(version_four_plan.schema_version, 4)
+        self.assertEqual(
+            version_four_plan.generator_adapter_binding.adapter_id,
+            "deterministic-fake",
+        )
+        wrong_role = copy.deepcopy(version_four)
+        wrong_role["generator_adapter_binding"]["role"] = "comparison"
+        self.assert_schema_and_parser_reject(wrong_role)
 
     def test_holdout_parser_and_schema_reject_billing_policy_mutations(self) -> None:
         mutations: list[dict[str, object]] = []

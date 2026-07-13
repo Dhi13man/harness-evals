@@ -15,6 +15,9 @@
     },
     {
       "$ref": "#/$defs/suiteV5"
+    },
+    {
+      "$ref": "#/$defs/suiteV6"
     }
   ],
   "$defs": {
@@ -24,6 +27,12 @@
         "comparator"
       ],
       "properties": {
+        "provider": {
+          "$ref": "#/$defs/provider"
+        },
+        "comparator": {
+          "$ref": "#/$defs/comparatorProvider"
+        },
         "schema_version": {
           "const": 2
         },
@@ -66,6 +75,12 @@
         "evaluation_mode"
       ],
       "properties": {
+        "provider": {
+          "$ref": "#/$defs/provider"
+        },
+        "comparator": {
+          "$ref": "#/$defs/comparatorProvider"
+        },
         "schema_version": {
           "const": 3
         },
@@ -157,6 +172,12 @@
         "shared_verifier_dir"
       ],
       "properties": {
+        "provider": {
+          "$ref": "#/$defs/provider"
+        },
+        "comparator": {
+          "$ref": "#/$defs/comparatorProvider"
+        },
         "schema_version": {
           "const": 4
         },
@@ -240,8 +261,99 @@
         "holdout"
       ],
       "properties": {
+        "provider": {
+          "$ref": "#/$defs/provider"
+        },
+        "comparator": {
+          "$ref": "#/$defs/comparatorProvider"
+        },
         "schema_version": {
           "const": 5
+        },
+        "evaluation_mode": {
+          "enum": [
+            "judged",
+            "objective_only"
+          ]
+        },
+        "comparator_profile": {
+          "$ref": "#/$defs/comparatorProfile"
+        },
+        "holdout": {
+          "$ref": "#/$defs/holdoutConfig"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "evaluation_mode": {
+                "const": "judged"
+              }
+            },
+            "required": [
+              "evaluation_mode"
+            ]
+          },
+          "then": {
+            "required": [
+              "comparator",
+              "comparator_profile"
+            ],
+            "properties": {
+              "cases": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "$ref": "#/$defs/judgedCaseV4"
+                }
+              }
+            }
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "comparator"
+                  ]
+                },
+                {
+                  "required": [
+                    "comparator_profile"
+                  ]
+                }
+              ]
+            },
+            "properties": {
+              "cases": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "$ref": "#/$defs/objectiveCaseV4"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "suiteV6": {
+      "$ref": "#/$defs/suiteBase",
+      "required": [
+        "evaluation_mode",
+        "shared_verifier_dir",
+        "holdout"
+      ],
+      "properties": {
+        "provider": {
+          "$ref": "#/$defs/providerV6"
+        },
+        "comparator": {
+          "$ref": "#/$defs/comparatorProviderV6"
+        },
+        "schema_version": {
+          "const": 6
         },
         "evaluation_mode": {
           "enum": [
@@ -342,10 +454,8 @@
           "$ref": "#/$defs/relativePath"
         },
         "provider": {
-          "$ref": "#/$defs/provider"
         },
         "comparator": {
-          "$ref": "#/$defs/comparatorProvider"
         },
         "comparator_profile": {},
         "shared_verifier_dir": {
@@ -662,6 +772,171 @@
                 ]
               }
             }
+          }
+        }
+      ]
+    },
+    "providerV6": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "adapter",
+            "executable",
+            "max_budget_usd",
+            "model",
+            "timeout_seconds"
+          ],
+          "properties": {
+            "adapter": {
+              "const": "claude-cli"
+            },
+            "billing_basis": {
+              "const": "metered_api"
+            },
+            "executable": {
+              "type": "string",
+              "minLength": 1
+            },
+            "max_budget_usd": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1
+            },
+            "timeout_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3600
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "adapter",
+            "billing_basis",
+            "executable",
+            "model",
+            "protocol_lock",
+            "reasoning_effort",
+            "timeout_seconds"
+          ],
+          "properties": {
+            "adapter": {
+              "const": "codex-app-server"
+            },
+            "billing_basis": {
+              "const": "chatgpt_subscription"
+            },
+            "executable": {
+              "type": "string",
+              "minLength": 1
+            },
+            "model": {
+              "enum": [
+                "gpt-5.6-luna",
+                "gpt-5.6-terra"
+              ]
+            },
+            "protocol_lock": {
+              "$ref": "#/$defs/suiteFilePath"
+            },
+            "reasoning_effort": {
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max",
+                "ultra"
+              ]
+            },
+            "timeout_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3600
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "model": {
+                    "const": "gpt-5.6-luna"
+                  }
+                },
+                "required": [
+                  "model"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "reasoning_effort": {
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high",
+                      "xhigh",
+                      "max"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "adapter",
+            "model",
+            "timeout_seconds"
+          ],
+          "properties": {
+            "adapter": {
+              "const": "deterministic-fake"
+            },
+            "billing_basis": {
+              "const": "metered_api"
+            },
+            "max_budget_usd": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1
+            },
+            "timeout_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3600
+            }
+          }
+        }
+      ]
+    },
+    "comparatorProviderV6": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/providerV6"
+        },
+        {
+          "not": {
+            "properties": {
+              "adapter": {
+                "const": "codex-app-server"
+              }
+            },
+            "required": [
+              "adapter"
+            ]
           }
         }
       ]

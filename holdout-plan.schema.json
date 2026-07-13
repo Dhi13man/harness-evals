@@ -1,6 +1,61 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Dhi13man/harness-evals/blob/main/holdout-plan.schema.json",
+  "$defs": {
+    "adapterBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter_id": {
+          "pattern": "^[a-z0-9][a-z0-9._-]*$",
+          "type": "string"
+        },
+        "authority_scope": {
+          "enum": [
+            "diagnostic",
+            "production",
+            "test"
+          ]
+        },
+        "binding_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "capability_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "config_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "contract_revision": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "role": {
+          "enum": [
+            "comparison",
+            "generation"
+          ]
+        },
+        "runtime_provenance_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "adapter_id",
+        "authority_scope",
+        "binding_sha256",
+        "capability_sha256",
+        "config_sha256",
+        "contract_revision",
+        "role",
+        "runtime_provenance_sha256"
+      ],
+      "type": "object"
+    }
+  },
   "additionalProperties": false,
   "properties": {
     "comparator_calibration_evidence_sha256": {
@@ -358,6 +413,22 @@
       ],
       "type": "object"
     },
+    "generator_adapter_binding": {
+      "$ref": "#/$defs/adapterBinding",
+      "properties": {
+        "role": {
+          "const": "generation"
+        }
+      }
+    },
+    "comparator_adapter_binding": {
+      "$ref": "#/$defs/adapterBinding",
+      "properties": {
+        "role": {
+          "const": "comparison"
+        }
+      }
+    },
     "manifest_sha256": {
       "pattern": "^[0-9a-f]{64}$",
       "type": "string"
@@ -513,7 +584,8 @@
     "schema_version": {
       "enum": [
         2,
-        3
+        3,
+        4
       ]
     },
     "seed": {
@@ -535,6 +607,67 @@
     "comparison_profile",
     "cases",
     "provenance"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "schema_version": {
+            "const": 4
+          }
+        },
+        "required": [
+          "schema_version"
+        ]
+      },
+      "then": {
+        "required": [
+          "generator_adapter_binding"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "evaluation_mode": {
+                  "const": "judged"
+                }
+              },
+              "required": [
+                "evaluation_mode"
+              ]
+            },
+            "then": {
+              "required": [
+                "comparator_adapter_binding"
+              ]
+            },
+            "else": {
+              "not": {
+                "required": [
+                  "comparator_adapter_binding"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "generator_adapter_binding"
+              ]
+            },
+            {
+              "required": [
+                "comparator_adapter_binding"
+              ]
+            }
+          ]
+        }
+      }
+    }
   ],
   "oneOf": [
     {
@@ -573,6 +706,16 @@
           {
             "required": [
               "objective_acceptance_policy_sha256"
+            ]
+          },
+          {
+            "required": [
+              "generator_adapter_binding"
+            ]
+          },
+          {
+            "required": [
+              "comparator_adapter_binding"
             ]
           }
         ]
@@ -619,7 +762,10 @@
           "const": "judged"
         },
         "schema_version": {
-          "const": 3
+          "enum": [
+            3,
+            4
+          ]
         }
       },
       "required": [
@@ -677,7 +823,10 @@
           "const": "objective_only"
         },
         "schema_version": {
-          "const": 3
+          "enum": [
+            3,
+            4
+          ]
         }
       },
       "required": [

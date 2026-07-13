@@ -165,6 +165,9 @@ def _release(*, test: bool) -> dict[str, Any]:
             "profile_registry_source_sha256": file_sha256(
                 PROJECT_ROOT / "harness_evals" / "comparator_profiles.py"
             ),
+            "provider_capability_registry_source_sha256": file_sha256(
+                PROJECT_ROOT / "harness_evals" / "provider_capabilities.py"
+            ),
             "harness_manifest_source_sha256": file_sha256(
                 PROJECT_ROOT / "harness_evals" / "manifest.py"
             ),

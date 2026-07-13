@@ -572,6 +572,36 @@ class SuiteFixture:
         self.manifest["holdout"] = {"comparison_ids": list(comparison_ids)}
         self.save_manifest()
 
+    @staticmethod
+    def _use_adapter(config: dict[str, object]) -> None:
+        adapter_ids = {
+            "claude": "claude-cli",
+            "codex": "codex-app-server",
+            "fake": "deterministic-fake",
+        }
+        config["adapter"] = adapter_ids[config.pop("kind")]
+
+    def use_v6_judged(
+        self,
+        comparison_ids: tuple[str, ...] = ("without-current", "old-current"),
+        bundle_source: str = "skills/demo",
+    ) -> None:
+        self.use_v5_judged(comparison_ids, bundle_source)
+        self.manifest["schema_version"] = 6
+        self._use_adapter(self.manifest["provider"])
+        self._use_adapter(self.manifest["comparator"])
+        self.save_manifest()
+
+    def use_v6_objective(
+        self,
+        comparison_ids: tuple[str, ...] = ("without-current", "old-current"),
+        bundle_source: str = "skills/demo",
+    ) -> None:
+        self.use_v5_objective(comparison_ids, bundle_source)
+        self.manifest["schema_version"] = 6
+        self._use_adapter(self.manifest["provider"])
+        self.save_manifest()
+
     def isolate_basic_case(self) -> None:
         case_root = "cases/basic"
         self._write_suite(f"{case_root}/prompt.md", "Fix and verify the result.\n")
@@ -4429,6 +4459,7 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
         runner: EvalRunner | None = None,
         *,
         bypass_generator_authority: bool = True,
+        bypass_comparator_authority: bool = True,
     ) -> EvalRunner:
         runner = runner or self.runner(production=False)
         runtime = runner._load_comparator_runtime()
@@ -4458,6 +4489,14 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
                 runner,
                 "_assert_generator_release_authority",
                 return_value=None,
+            )
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        if bypass_comparator_authority:
+            patcher = patch.object(
+                runner,
+                "_production_comparator_release_authoritative",
+                return_value=True,
             )
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -5384,6 +5423,194 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
                 bindings["treatment"]["source_sha256_by_case"][case.id],
             )
 
+    def test_schema_v6_seals_reviewed_adapter_authority_in_plan_v4(self) -> None:
+        self.fixture.manifest["schema_version"] = 6
+        self.fixture.manifest["evaluation_mode"] = "judged"
+        self.fixture.manifest["comparator_profile"] = {
+            "kind": "builtin",
+            "id": "software-engineering-v2.3",
+        }
+        self.fixture.manifest["shared_verifier_dir"] = None
+        self.fixture.manifest["holdout"] = {"comparison_ids": list(self.comparison_ids)}
+        self.fixture._use_adapter(self.fixture.manifest["provider"])
+        self.fixture._use_adapter(self.fixture.manifest["comparator"])
+        for case in self.fixture.manifest["cases"]:
+            case["bundle_source"] = f"skills/{case['skill']}"
+        self.fixture.save_manifest()
+        suite = load_suite(self.fixture.manifest_path)
+        runner = self.production_runner(self.runner(suite, production=False))
+        output = self.fixture.root / "provider-authority-plan.json"
+
+        runner.prepare_holdout_plan(
+            output_path=output,
+            plan_id="provider-authority-v1",
+            reviewers=("reviewer-a",),
+            freeze_record="review:freeze:provider-authority-v1",
+            seal_record="review:seal:provider-authority-v1",
+        )
+        plan = load_holdout_plan(output)
+        self.assertEqual(plan.schema_version, 4)
+        self.assertEqual(
+            plan.generator_adapter_binding.as_json(),
+            runner._agent_authority_binding,
+        )
+        self.assertEqual(
+            plan.comparator_adapter_binding.as_json(),
+            runner._comparator_authority_binding,
+        )
+        self.assertEqual(
+            plan.generator_adapter_binding.adapter_id, "deterministic-fake"
+        )
+        self.assertEqual(plan.generator_adapter_binding.authority_scope, "test")
+        schema = json.loads(
+            (HARNESS_ROOT / "holdout-plan.schema.json").read_text(encoding="utf-8")
+        )
+        payload = json.loads(output.read_text(encoding="utf-8"))
+        self.assertFalse(list(Draft202012Validator(schema).iter_errors(payload)))
+
+        legacy = copy.deepcopy(payload)
+        legacy["schema_version"] = 3
+        legacy.pop("generator_adapter_binding")
+        legacy.pop("comparator_adapter_binding")
+        legacy_path = self.fixture.save_holdout_plan(
+            legacy, name="provider-authority-legacy-plan.json"
+        )
+        with self.assertRaisesRegex(RunnerError, "schema-v4 provider authority"):
+            runner.preflight(
+                RunSelection(
+                    split="holdout",
+                    comparison_ids=self.comparison_ids,
+                    holdout_plan=legacy_path,
+                )
+            )
+
+        drifted = copy.deepcopy(payload)
+        drifted["generator_adapter_binding"]["capability_sha256"] = "f" * 64
+        drifted_path = self.fixture.save_holdout_plan(
+            drifted, name="provider-authority-drifted-plan.json"
+        )
+        with self.assertRaisesRegex(RunnerError, "generator adapter authority"):
+            runner.preflight(
+                RunSelection(
+                    split="holdout",
+                    comparison_ids=self.comparison_ids,
+                    holdout_plan=drifted_path,
+                )
+            )
+
+    def test_schema_v6_rejects_injected_production_comparator_authority(self) -> None:
+        self.fixture.manifest["schema_version"] = 6
+        self.fixture.manifest["evaluation_mode"] = "judged"
+        self.fixture.manifest["comparator_profile"] = {
+            "kind": "builtin",
+            "id": "software-engineering-v2.3",
+        }
+        self.fixture.manifest["shared_verifier_dir"] = None
+        self.fixture.manifest["holdout"] = {"comparison_ids": list(self.comparison_ids)}
+        self.fixture._use_adapter(self.fixture.manifest["provider"])
+        self.fixture.manifest["comparator"] = {
+            "adapter": "claude-cli",
+            "executable": str(self.fixture.fake_codex),
+            "model": "fake-sonnet-v2",
+            "timeout_seconds": 300,
+            "max_budget_usd": 1.0,
+        }
+        for case in self.fixture.manifest["cases"]:
+            case["bundle_source"] = f"skills/{case['skill']}"
+        self.fixture.save_manifest()
+        suite = load_suite(self.fixture.manifest_path)
+        injected_comparator = self.fixture.provider()
+        runner = self.production_runner(
+            EvalRunner(suite, self.provider, injected_comparator),
+            bypass_comparator_authority=False,
+        )
+        output = self.fixture.root / "injected-comparator-plan.json"
+
+        with self.assertRaisesRegex(
+            RunnerError, "exact built-in Claude CLI comparator"
+        ):
+            runner.prepare_holdout_plan(
+                output_path=output,
+                plan_id="injected-comparator-v1",
+                reviewers=("reviewer-a",),
+                freeze_record="review:freeze:injected-comparator-v1",
+                seal_record="review:seal:injected-comparator-v1",
+            )
+
+        self.assertFalse(runner._production_comparator_release_authoritative())
+        self.assertEqual(self.provider.agent_requests, [])
+        self.assertEqual(injected_comparator.comparator_requests, [])
+        self.assertFalse(output.exists())
+
+    def test_schema_v6_rejects_provider_authority_drift_before_dispatch(self) -> None:
+        self.fixture.manifest["schema_version"] = 6
+        self.fixture.manifest["evaluation_mode"] = "judged"
+        self.fixture.manifest["comparator_profile"] = {
+            "kind": "builtin",
+            "id": "software-engineering-v2.3",
+        }
+        self.fixture.manifest["shared_verifier_dir"] = None
+        self.fixture.manifest["holdout"] = {"comparison_ids": list(self.comparison_ids)}
+        self.fixture._use_adapter(self.fixture.manifest["provider"])
+        self.fixture._use_adapter(self.fixture.manifest["comparator"])
+        for case in self.fixture.manifest["cases"]:
+            case["bundle_source"] = f"skills/{case['skill']}"
+        self.fixture.save_manifest()
+
+        mutations = (
+            (
+                "generator config",
+                "generator provider binding authority drifted",
+                lambda suite, _generator, _comparator, _runner: object.__setattr__(
+                    suite.provider, "model", "mutated-generator-model"
+                ),
+            ),
+            (
+                "comparator config",
+                "comparator provider authority binding drifted",
+                lambda suite, _generator, _comparator, _runner: object.__setattr__(
+                    suite.comparator, "model", "mutated-comparator-model"
+                ),
+            ),
+            (
+                "generator runtime identity",
+                "generator provider identity drifted",
+                lambda _suite, generator, _comparator, _runner: setattr(
+                    generator, "_version", "mutated-generator-version"
+                ),
+            ),
+            (
+                "comparator runtime identity",
+                "comparator provider authority binding drifted",
+                lambda _suite, _generator, comparator, _runner: setattr(
+                    comparator, "_version", "mutated-comparator-version"
+                ),
+            ),
+            (
+                "comparator instance",
+                "comparator provider instance drifted",
+                lambda _suite, _generator, _comparator, runner: setattr(
+                    runner, "comparator_provider", self.fixture.provider()
+                ),
+            ),
+        )
+        for label, expected, mutate in mutations:
+            with self.subTest(label=label):
+                suite = load_suite(self.fixture.manifest_path)
+                generator = self.fixture.provider()
+                comparator = self.fixture.provider()
+                runner = EvalRunner(suite, generator, comparator)
+                self.addCleanup(runner.close)
+                mutate(suite, generator, comparator, runner)
+
+                with self.assertRaisesRegex(RunnerError, expected):
+                    runner.preflight(
+                        RunSelection(comparison_ids=(self.comparison_ids[0],))
+                    )
+
+                self.assertEqual(generator.agent_requests, [])
+                self.assertEqual(comparator.comparator_requests, [])
+
     def test_schema_v5_objective_holdout_seals_policy_without_comparator(self) -> None:
         suite = self.objective_v5_suite()
         runner = EvalRunner(suite)
@@ -6290,6 +6517,93 @@ class ManifestValidationTests(unittest.TestCase):
                 self.fixture.save_manifest()
                 with self.assertRaises(ManifestError):
                     load_suite(self.fixture.manifest_path)
+
+    def test_v6_selects_reviewed_provider_adapters_without_kind_fields(self) -> None:
+        schema = json.loads((HARNESS_ROOT / "suite.schema.json").read_text())
+        self.fixture.use_v6_judged()
+        payload = copy.deepcopy(self.fixture.manifest)
+        self.assertFalse(list(Draft202012Validator(schema).iter_errors(payload)))
+        suite = load_suite(self.fixture.manifest_path)
+        self.assertEqual(suite.provider.adapter_id, "deterministic-fake")
+        self.assertEqual(suite.provider.kind, "fake")
+        self.assertEqual(suite.comparator.adapter_id, "deterministic-fake")
+
+        generation_configs = (
+            {
+                "adapter": "claude-cli",
+                "executable": str(self.fixture.fake_codex),
+                "max_budget_usd": 1.0,
+                "model": "fake-model-v1",
+                "timeout_seconds": 10,
+            },
+            {
+                "adapter": "codex-app-server",
+                "billing_basis": "chatgpt_subscription",
+                "executable": str(self.fixture.fake_codex),
+                "model": "gpt-5.6-terra",
+                "protocol_lock": self.fixture.codex_protocol_lock.name,
+                "reasoning_effort": "ultra",
+                "timeout_seconds": 10,
+            },
+            payload["provider"],
+        )
+        for config in generation_configs:
+            with self.subTest(adapter=config["adapter"]):
+                candidate = copy.deepcopy(payload)
+                candidate["provider"] = copy.deepcopy(config)
+                self.assertFalse(
+                    list(Draft202012Validator(schema).iter_errors(candidate))
+                )
+                self.fixture.manifest = candidate
+                self.fixture.save_manifest()
+                parsed = load_suite(self.fixture.manifest_path)
+                self.assertEqual(parsed.provider.adapter_id, config["adapter"])
+
+        mutations: list[dict[str, object]] = []
+        unknown = copy.deepcopy(payload)
+        unknown["provider"]["adapter"] = "suite-claimed-production"
+        mutations.append(unknown)
+        legacy_kind = copy.deepcopy(payload)
+        legacy_kind["provider"]["kind"] = legacy_kind["provider"].pop("adapter")
+        mutations.append(legacy_kind)
+        codex_comparator = copy.deepcopy(payload)
+        codex_comparator["comparator"] = {
+            "adapter": "codex-app-server",
+            "billing_basis": "chatgpt_subscription",
+            "executable": str(self.fixture.fake_codex),
+            "model": "gpt-5.6-luna",
+            "protocol_lock": self.fixture.codex_protocol_lock.name,
+            "reasoning_effort": "max",
+            "timeout_seconds": 10,
+        }
+        mutations.append(codex_comparator)
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                self.assertTrue(
+                    list(Draft202012Validator(schema).iter_errors(mutation))
+                )
+                self.fixture.manifest = mutation
+                self.fixture.save_manifest()
+                with self.assertRaises(ManifestError):
+                    load_suite(self.fixture.manifest_path)
+
+        legacy_adapter = copy.deepcopy(payload)
+        legacy_adapter["schema_version"] = 5
+        with self.subTest(mutation="adapter in schema v5"):
+            self.assertTrue(
+                list(Draft202012Validator(schema).iter_errors(legacy_adapter))
+            )
+            self.fixture.manifest = legacy_adapter
+            self.fixture.save_manifest()
+            with self.assertRaises(ManifestError):
+                load_suite(self.fixture.manifest_path)
+
+        self.fixture.manifest = self.fixture._manifest()
+        self.fixture.save_manifest()
+        self.fixture.use_v6_objective()
+        objective = load_suite(self.fixture.manifest_path)
+        self.assertEqual(objective.provider.adapter_id, "deterministic-fake")
+        self.assertIsNone(objective.comparator)
 
     def test_v4_requires_bundle_source_and_legacy_versions_derive_it(self) -> None:
         schema = json.loads((HARNESS_ROOT / "suite.schema.json").read_text())
@@ -7293,10 +7607,11 @@ class CheckedInSuiteTests(unittest.TestCase):
             (HARNESS_ROOT / "holdout-plan.schema.json").read_text(encoding="utf-8")
         )
         self.assertFalse(schema["additionalProperties"])
-        self.assertEqual(schema["properties"]["schema_version"]["enum"], [2, 3])
+        self.assertEqual(schema["properties"]["schema_version"]["enum"], [2, 3, 4])
         self.assertEqual(len(schema["oneOf"]), 3)
         self.assertIn("source_bindings", schema["properties"])
         self.assertIn("evaluation_mode", schema["properties"])
+        self.assertIn("generator_adapter_binding", schema["properties"])
         provenance = schema["properties"]["provenance"]
         self.assertEqual(
             provenance["properties"]["assurance"]["const"],
@@ -7319,7 +7634,7 @@ class CheckedInSuiteTests(unittest.TestCase):
             schema["properties"]["cases"]["items"]["required"],
         )
 
-    def test_suite_schema_supports_strict_v2_v3_v4_and_v5_modes(self) -> None:
+    def test_suite_schema_supports_strict_v2_through_v6_modes(self) -> None:
         schema = json.loads(
             (HARNESS_ROOT / "suite.schema.json").read_text(encoding="utf-8")
         )
@@ -7330,6 +7645,7 @@ class CheckedInSuiteTests(unittest.TestCase):
                 "#/$defs/suiteV3",
                 "#/$defs/suiteV4",
                 "#/$defs/suiteV5",
+                "#/$defs/suiteV6",
             ],
         )
         self.assertEqual(
@@ -7350,6 +7666,10 @@ class CheckedInSuiteTests(unittest.TestCase):
             schema["$defs"]["suiteV5"]["properties"]["schema_version"]["const"], 5
         )
         self.assertIn("holdout", schema["$defs"]["suiteV5"]["required"])
+        self.assertEqual(
+            schema["$defs"]["suiteV6"]["properties"]["schema_version"]["const"], 6
+        )
+        self.assertIn("providerV6", schema["$defs"])
 
     def test_gcc_attestation_includes_derived_driver_closure(self) -> None:
         gcc = shutil.which("gcc")
