@@ -62,7 +62,7 @@ _CAPABILITIES: Mapping[str, ProviderCapabilities] = MappingProxyType(
         "claude-cli": ProviderCapabilities(
             adapter_id="claude-cli",
             legacy_kind="claude",
-            contract_revision=1,
+            contract_revision=2,
             roles=("comparison", "generation"),
             concurrency="concurrent",
             sandbox_kind="systemd-run-user",
@@ -77,12 +77,16 @@ _CAPABILITIES: Mapping[str, ProviderCapabilities] = MappingProxyType(
                 "requested_model",
                 "sandbox_runtime",
             ),
-            artifact_outputs=("workspace_diff",),
+            artifact_outputs=(
+                "final_output_json",
+                "final_output_text",
+                "workspace_diff",
+            ),
         ),
         "codex-app-server": ProviderCapabilities(
             adapter_id="codex-app-server",
             legacy_kind="codex",
-            contract_revision=1,
+            contract_revision=2,
             roles=("generation",),
             concurrency="serialized",
             sandbox_kind="systemd-run-user+codex-permission-profile",
@@ -105,12 +109,16 @@ _CAPABILITIES: Mapping[str, ProviderCapabilities] = MappingProxyType(
                 "runtime_bundle_sha256",
                 "schema_sha256",
             ),
-            artifact_outputs=("workspace_diff",),
+            artifact_outputs=(
+                "final_output_json",
+                "final_output_text",
+                "workspace_diff",
+            ),
         ),
         "deterministic-fake": ProviderCapabilities(
             adapter_id="deterministic-fake",
             legacy_kind="fake",
-            contract_revision=1,
+            contract_revision=2,
             roles=("comparison", "generation"),
             concurrency="concurrent",
             sandbox_kind="fake",
@@ -120,7 +128,11 @@ _CAPABILITIES: Mapping[str, ProviderCapabilities] = MappingProxyType(
             budget_mechanism="none",
             quota_evidence="forbidden",
             provenance_fields=("provider_version", "requested_model"),
-            artifact_outputs=("workspace_diff",),
+            artifact_outputs=(
+                "final_output_json",
+                "final_output_text",
+                "workspace_diff",
+            ),
         ),
     }
 )

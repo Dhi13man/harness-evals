@@ -1,6 +1,12 @@
 """Reusable A/B evaluation system for agent skills and instruction bundles."""
 
-from .manifest import ManifestError, ProviderConfig, SuiteSpec, load_suite
+from .manifest import (
+    ArtifactContractSpec,
+    ManifestError,
+    ProviderConfig,
+    SuiteSpec,
+    load_suite,
+)
 from .provider_capabilities import (
     ProviderCapabilities,
     ProviderCapabilityError,
@@ -21,6 +27,7 @@ __version__ = "0.2.0"
 
 __all__ = [
     "ClaudeCliProvider",
+    "ArtifactContractSpec",
     "EvalRunner",
     "FakeProvider",
     "ManifestError",

@@ -317,6 +317,7 @@ class SuiteFixture:
         runtime_sources = {
             "source_sha256": "harness_evals/comparator_runtime.py",
             "harness_runner_source_sha256": "harness_evals/runner.py",
+            "artifact_normalizer_source_sha256": "harness_evals/artifacts.py",
             "provider_source_sha256": "harness_evals/providers.py",
             "harness_manifest_source_sha256": "harness_evals/manifest.py",
             "harness_package_source_sha256": "harness_evals/__init__.py",
@@ -600,6 +601,30 @@ class SuiteFixture:
         self.use_v5_objective(comparison_ids, bundle_source)
         self.manifest["schema_version"] = 6
         self._use_adapter(self.manifest["provider"])
+        self.save_manifest()
+
+    def use_v7_objective(
+        self,
+        artifact_kind: str,
+        comparison_ids: tuple[str, ...] = ("without-current", "old-current"),
+        bundle_source: str = "skills/demo",
+    ) -> None:
+        self.use_v6_objective(comparison_ids, bundle_source)
+        self.manifest["schema_version"] = 7
+        for case in self.manifest["cases"]:
+            case["artifact_contract"] = {"kind": artifact_kind}
+        self.save_manifest()
+
+    def use_v7_judged(
+        self,
+        artifact_kind: str,
+        comparison_ids: tuple[str, ...] = ("without-current", "old-current"),
+        bundle_source: str = "skills/demo",
+    ) -> None:
+        self.use_v6_judged(comparison_ids, bundle_source)
+        self.manifest["schema_version"] = 7
+        for case in self.manifest["cases"]:
+            case["artifact_contract"] = {"kind": artifact_kind}
         self.save_manifest()
 
     def isolate_basic_case(self) -> None:
@@ -2839,6 +2864,205 @@ print(json.dumps({"passed": True, "assertions": [
             self.assertTrue(arm["verifier"]["workspace_mutated"])
             self.assertNotIn("verifier-created.txt", arm["diff"])
 
+    def test_final_text_artifact_and_pristine_workspace_are_read_only(self) -> None:
+        self.fixture.use_v6_objective()
+        self.fixture.manifest["schema_version"] = 7
+        self.fixture.manifest["cases"][0]["artifact_contract"] = {
+            "kind": "final_output_text"
+        }
+        self.fixture.set_verifier(
+            """import hashlib
+import json
+import os
+from pathlib import Path
+
+artifact = Path(os.environ["EVAL_ARTIFACT_PATH"])
+workspace = Path(os.environ["EVAL_WORKSPACE"])
+content = artifact.read_bytes()
+
+def rejects(action):
+    try:
+        action()
+    except OSError:
+        return True
+    return False
+
+artifact_read_only = rejects(lambda: artifact.write_text("mutated", encoding="utf-8"))
+artifact_unlink_rejected = rejects(artifact.unlink)
+workspace_read_only = rejects(
+    lambda: (workspace / "verifier-created.txt").write_text("mutated", encoding="utf-8")
+)
+passed = (
+    content == b"line 1\\nline 2\\n"
+    and os.environ["EVAL_ARTIFACT_KIND"] == "final_output_text"
+    and os.environ["EVAL_ARTIFACT_SHA256"] == hashlib.sha256(content).hexdigest()
+    and (workspace / "input.txt").read_text(encoding="utf-8") == "original\\n"
+    and not (workspace / "poison.txt").exists()
+    and not (workspace / "artifact.txt").exists()
+    and artifact_read_only
+    and artifact_unlink_rejected
+    and workspace_read_only
+)
+print(json.dumps({
+    "passed": passed,
+    "assertions": [{
+        "id": "answer-present",
+        "passed": passed,
+        "evidence": "canonical artifact and pristine fixture were mounted read-only",
+    }],
+    "metrics": {},
+}))
+"""
+        )
+        self.fixture.save_manifest()
+
+        def mutate_workspace(request):
+            (request.workspace / "input.txt").write_text("candidate mutation\n")
+            (request.workspace / "poison.txt").write_text("candidate-only\n")
+            (request.workspace / "artifact.txt").write_text("candidate fake\n")
+            return "line 1\r\nline 2\r"
+
+        provider = FakeProvider(agent_handler=mutate_workspace)
+        result = EvalRunner(self.load(), provider).run(
+            RunSelection(comparison_ids=("without-current",)),
+            output_dir=self.output("final-text-artifact"),
+        )
+
+        self.assertTrue(result["passed"], result)
+        for arm in result["pairs"][0]["arms"].values():
+            self.assertEqual(arm["status"], "completed")
+            self.assertEqual(arm["artifact"]["kind"], "final_output_text")
+            self.assertEqual(arm["artifact"]["byte_count"], 14)
+            self.assertTrue(arm["verifier"]["artifact"]["read_only"])
+            self.assertTrue(arm["verifier"]["sandbox"]["workspace_read_only"])
+            self.assertFalse(arm["verifier"]["workspace_mutated"])
+            self.assertTrue(
+                any(
+                    item.startswith("BindReadOnlyPaths=")
+                    and item.endswith("/artifact/artifact.txt")
+                    for item in arm["verifier"]["sandbox"]["properties"]
+                )
+            )
+
+    def test_malformed_declared_output_stops_before_verifier_and_comparator(
+        self,
+    ) -> None:
+        self.fixture.use_v7_objective("final_output_json")
+        provider = FakeProvider(agent_handler=lambda _request: '{"a":1,"a":2}')
+        runner = EvalRunner(self.load(), provider)
+
+        with patch.object(runner, "_run_verifier") as verifier:
+            result = runner.run(
+                RunSelection(comparison_ids=("without-current",)),
+                output_dir=self.output("malformed-final-json"),
+            )
+
+        self.assertFalse(result["passed"])
+        verifier.assert_not_called()
+        self.assertGreater(len(provider.agent_requests), 0)
+        self.assertEqual(provider.comparator_requests, [])
+        for arm in result["pairs"][0]["arms"].values():
+            self.assertEqual(arm["status"], "error")
+            self.assertEqual(arm["error_stage"], "artifact_normalization")
+            self.assertIn("duplicate key", arm["error"])
+            self.assertIsNone(arm["artifact"])
+
+    def test_final_json_artifact_runs_end_to_end_without_a_comparator(self) -> None:
+        self.fixture.use_v7_objective("final_output_json")
+        self.fixture.set_verifier(
+            """import hashlib
+import json
+import os
+from pathlib import Path
+
+artifact = Path(os.environ["EVAL_ARTIFACT_PATH"])
+workspace = Path(os.environ["EVAL_WORKSPACE"])
+content = artifact.read_bytes()
+try:
+    artifact.write_text("mutated", encoding="utf-8")
+    artifact_read_only = False
+except OSError:
+    artifact_read_only = True
+try:
+    (workspace / "verifier-created.txt").write_text("mutated", encoding="utf-8")
+    workspace_read_only = False
+except OSError:
+    workspace_read_only = True
+passed = (
+    content == b'{"a":1,"b":2}'
+    and os.environ["EVAL_ARTIFACT_KIND"] == "final_output_json"
+    and os.environ["EVAL_ARTIFACT_SHA256"] == hashlib.sha256(content).hexdigest()
+    and (workspace / "input.txt").read_text(encoding="utf-8") == "original\\n"
+    and not (workspace / "poison.txt").exists()
+    and artifact_read_only
+    and workspace_read_only
+)
+print(json.dumps({
+    "passed": passed,
+    "assertions": [{
+        "id": "answer-present",
+        "passed": passed,
+        "evidence": "canonical JSON and pristine fixture were mounted read-only",
+    }],
+    "metrics": {},
+}))
+"""
+        )
+        self.fixture.save_manifest()
+
+        def json_output(request):
+            (request.workspace / "input.txt").write_text("candidate mutation\n")
+            (request.workspace / "poison.txt").write_text("candidate-only\n")
+            return '{"b":2, "a":1.0}'
+
+        provider = FakeProvider(agent_handler=json_output)
+        result = EvalRunner(self.load(), provider).run(
+            RunSelection(comparison_ids=("without-current",)),
+            output_dir=self.output("final-json-artifact"),
+        )
+
+        self.assertTrue(result["passed"], result)
+        self.assertEqual(provider.comparator_requests, [])
+        self.assertEqual(result["pairs"][0]["winner_basis"], "verifier-pass-v1")
+        for arm in result["pairs"][0]["arms"].values():
+            self.assertEqual(arm["status"], "completed")
+            self.assertEqual(arm["artifact"]["kind"], "final_output_json")
+            self.assertEqual(arm["artifact"]["filename"], "artifact.json")
+            self.assertEqual(arm["artifact"]["canonicalization"], "rfc8785")
+            self.assertEqual(
+                arm["artifact"]["sha256"],
+                "43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777",
+            )
+            self.assertTrue(arm["verifier"]["artifact"]["read_only"])
+            self.assertTrue(arm["verifier"]["sandbox"]["workspace_read_only"])
+            self.assertFalse(arm["verifier"]["workspace_mutated"])
+
+    def test_judged_final_output_requires_a_calibrated_profile(self) -> None:
+        self.fixture.use_v7_judged("final_output_text")
+        provider = self.fixture.provider()
+        runner = EvalRunner(self.load(), provider, provider)
+
+        with self.assertRaisesRegex(
+            RunnerError, "comparator profile does not support.*final_output_text"
+        ):
+            runner.preflight(RunSelection(comparison_ids=("without-current",)))
+
+        self.assertEqual(provider.agent_requests, [])
+        self.assertEqual(provider.comparator_requests, [])
+
+        for case in self.fixture.manifest["cases"]:
+            case["artifact_contract"] = {"kind": "workspace_diff"}
+        self.fixture.save_manifest()
+        accepted_provider = self.fixture.provider()
+        accepted = EvalRunner(
+            self.load(), accepted_provider, accepted_provider
+        ).preflight(RunSelection(comparison_ids=("without-current",)))
+        self.assertEqual(
+            accepted["cases"][0]["artifact_contract"], {"kind": "workspace_diff"}
+        )
+        self.assertEqual(accepted_provider.agent_requests, [])
+        self.assertEqual(accepted_provider.comparator_requests, [])
+
     def test_configured_shared_verifier_is_snapshotted_and_mounted_read_only(
         self,
     ) -> None:
@@ -3201,6 +3425,9 @@ environment_minimal = (
     "ANTHROPIC_API_KEY" not in os.environ
     and {{name for name in os.environ if name.startswith("EVAL_")}} == {{
         "EVAL_WORKSPACE",
+        "EVAL_ARTIFACT_PATH",
+        "EVAL_ARTIFACT_KIND",
+        "EVAL_ARTIFACT_SHA256",
         "EVAL_CASE_ROOT",
         "EVAL_SHARED_ROOT",
         "EVAL_TOOL_BIN",
@@ -6605,6 +6832,76 @@ class ManifestValidationTests(unittest.TestCase):
         self.assertEqual(objective.provider.adapter_id, "deterministic-fake")
         self.assertIsNone(objective.comparator)
 
+    def test_v7_requires_explicit_case_artifact_contracts(self) -> None:
+        schema = json.loads((HARNESS_ROOT / "suite.schema.json").read_text())
+        self.fixture.use_v6_objective()
+        self.fixture.manifest["schema_version"] = 7
+        for index, case in enumerate(self.fixture.manifest["cases"]):
+            case["artifact_contract"] = {
+                "kind": ("final_output_text", "final_output_json", "workspace_diff")[
+                    index % 3
+                ]
+            }
+        self.fixture.save_manifest()
+        payload = copy.deepcopy(self.fixture.manifest)
+
+        self.assertFalse(list(Draft202012Validator(schema).iter_errors(payload)))
+        for kind in ("final_output_text", "final_output_json", "workspace_diff"):
+            candidate = copy.deepcopy(payload)
+            candidate["cases"][0]["artifact_contract"]["kind"] = kind
+            self.fixture.manifest = candidate
+            self.fixture.save_manifest()
+            self.assertEqual(
+                load_suite(self.fixture.manifest_path).cases[0].artifact_contract.kind,
+                kind,
+            )
+
+        missing = copy.deepcopy(payload)
+        missing["cases"][0].pop("artifact_contract")
+        unknown = copy.deepcopy(payload)
+        unknown["cases"][0]["artifact_contract"]["kind"] = "claimed-by-suite"
+        legacy_with_contract = copy.deepcopy(payload)
+        legacy_with_contract["schema_version"] = 6
+        for mutation in (missing, unknown, legacy_with_contract):
+            with self.subTest(mutation=mutation):
+                self.assertTrue(
+                    list(Draft202012Validator(schema).iter_errors(mutation))
+                )
+                self.fixture.manifest = mutation
+                self.fixture.save_manifest()
+                with self.assertRaises(ManifestError):
+                    load_suite(self.fixture.manifest_path)
+
+        self.fixture.manifest = self.fixture._manifest()
+        self.fixture.save_manifest()
+        raw_bytes = self.fixture.manifest_path.read_bytes()
+        legacy = load_suite(self.fixture.manifest_path)
+        self.assertEqual(legacy.raw_bytes, raw_bytes)
+        self.assertEqual(legacy.manifest_hash, hashlib.sha256(raw_bytes).hexdigest())
+        self.assertEqual(legacy.cases[0].artifact_contract.kind, "workspace_diff")
+        legacy_fingerprint = _release_case_fingerprint(
+            legacy.cases[0],
+            prompt_sha256="1" * 64,
+            fixture_sha256="2" * 64,
+            context_content_sha256s={},
+        )
+        declared_case = replace(
+            legacy.cases[0],
+            artifact_contract=replace(
+                legacy.cases[0].artifact_contract,
+                declared=True,
+            ),
+        )
+        self.assertNotEqual(
+            legacy_fingerprint,
+            _release_case_fingerprint(
+                declared_case,
+                prompt_sha256="1" * 64,
+                fixture_sha256="2" * 64,
+                context_content_sha256s={},
+            ),
+        )
+
     def test_v4_requires_bundle_source_and_legacy_versions_derive_it(self) -> None:
         schema = json.loads((HARNESS_ROOT / "suite.schema.json").read_text())
         original_bytes = self.fixture.manifest_path.read_bytes()
@@ -7634,7 +7931,7 @@ class CheckedInSuiteTests(unittest.TestCase):
             schema["properties"]["cases"]["items"]["required"],
         )
 
-    def test_suite_schema_supports_strict_v2_through_v6_modes(self) -> None:
+    def test_suite_schema_supports_strict_v2_through_v7_modes(self) -> None:
         schema = json.loads(
             (HARNESS_ROOT / "suite.schema.json").read_text(encoding="utf-8")
         )
@@ -7646,6 +7943,7 @@ class CheckedInSuiteTests(unittest.TestCase):
                 "#/$defs/suiteV4",
                 "#/$defs/suiteV5",
                 "#/$defs/suiteV6",
+                "#/$defs/suiteV7",
             ],
         )
         self.assertEqual(
@@ -7670,6 +7968,10 @@ class CheckedInSuiteTests(unittest.TestCase):
             schema["$defs"]["suiteV6"]["properties"]["schema_version"]["const"], 6
         )
         self.assertIn("providerV6", schema["$defs"])
+        self.assertEqual(
+            schema["$defs"]["suiteV7"]["properties"]["schema_version"]["const"], 7
+        )
+        self.assertIn("artifactContract", schema["$defs"])
 
     def test_gcc_attestation_includes_derived_driver_closure(self) -> None:
         gcc = shutil.which("gcc")

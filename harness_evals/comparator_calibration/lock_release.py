@@ -159,6 +159,9 @@ def _release(*, test: bool) -> dict[str, Any]:
             "harness_runner_source_sha256": file_sha256(
                 PROJECT_ROOT / "harness_evals" / "runner.py"
             ),
+            "artifact_normalizer_source_sha256": file_sha256(
+                PROJECT_ROOT / "harness_evals" / "artifacts.py"
+            ),
             "provider_source_sha256": file_sha256(
                 PROJECT_ROOT / "harness_evals" / "providers.py"
             ),

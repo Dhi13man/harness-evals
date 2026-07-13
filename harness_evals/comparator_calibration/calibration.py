@@ -2036,6 +2036,7 @@ def _validate_release(
             "id",
             "source_sha256",
             "harness_runner_source_sha256",
+            "artifact_normalizer_source_sha256",
             "provider_source_sha256",
             "profile_registry_source_sha256",
             "provider_capability_registry_source_sha256",
@@ -2063,6 +2064,7 @@ def _validate_release(
     runtime_source_fields = {
         "source_sha256",
         "harness_runner_source_sha256",
+        "artifact_normalizer_source_sha256",
         "provider_source_sha256",
         "profile_registry_source_sha256",
         "provider_capability_registry_source_sha256",
@@ -2089,6 +2091,9 @@ def _validate_release(
             "harness_runner_source_sha256": project_root
             / "harness_evals"
             / "runner.py",
+            "artifact_normalizer_source_sha256": project_root
+            / "harness_evals"
+            / "artifacts.py",
             "provider_source_sha256": project_root / "harness_evals" / "providers.py",
             "profile_registry_source_sha256": project_root
             / "harness_evals"
@@ -2188,6 +2193,7 @@ def validate_packaged_release_bindings(
     runtime_sources = {
         "source_sha256": runtime_source_root / "comparator_runtime.py",
         "harness_runner_source_sha256": runtime_source_root / "runner.py",
+        "artifact_normalizer_source_sha256": runtime_source_root / "artifacts.py",
         "provider_source_sha256": runtime_source_root / "providers.py",
         "profile_registry_source_sha256": runtime_source_root
         / "comparator_profiles.py",

@@ -1027,6 +1027,7 @@ class CorpusTests(CalibrationTestCase):
         for field in (
             "harness_manifest_source_sha256",
             "harness_package_source_sha256",
+            "artifact_normalizer_source_sha256",
             "run_evals_source_sha256",
             "holdout_plan_source_sha256",
             "prepare_holdout_plan_source_sha256",
@@ -1060,6 +1061,13 @@ class CorpusTests(CalibrationTestCase):
         release["runtime_adapter"]["baseline_authority_source_sha256"] = "0" * 64
         with self.assertRaisesRegex(
             CalibrationError, "authority.*source hash is stale"
+        ):
+            validate_release(dataclasses.replace(self.bundle, release=release))
+
+        release = copy.deepcopy(self.bundle.release)
+        release["runtime_adapter"]["artifact_normalizer_source_sha256"] = "0" * 64
+        with self.assertRaisesRegex(
+            CalibrationError, "artifact_normalizer.*source hash is stale"
         ):
             validate_release(dataclasses.replace(self.bundle, release=release))
 

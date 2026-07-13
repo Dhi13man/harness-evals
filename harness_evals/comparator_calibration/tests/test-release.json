@@ -22,7 +22,7 @@
   },
   "evaluator": {
     "version": "2.3.0",
-    "source_sha256": "086f0c4794729d3d562041edad1529f49ce823978a12b07089c2273d266c476b",
+    "source_sha256": "e3eacadc2f2a79a5fbf6e7ab09d06069ccced5a94ef3bf8a27b49ba48cc61e2b",
     "collector_source_sha256": "c601c330d7309090d980609a21d97a98ba49bcaa34831619eff14fc8dc3da8e4",
     "certifier_source_sha256": "5149f0ecb4a8e0588758cf98325c98b6060979a27fec6aeb95dcb22a07f52746"
   },
@@ -159,13 +159,14 @@
   },
   "runtime_adapter": {
     "id": "shared-harness-claude-cli-v1",
-    "source_sha256": "48ccef7716021ccc4db55817976cb7481e1534d6655e5b548bfd3b048a4b4ff6",
-    "harness_runner_source_sha256": "e8382cafe722c6852278d4212307618a671bf93c0aaff1df8bde11dde0c408f8",
+    "source_sha256": "853ef2116c5fa97c6605850728ca59732d40e8b5c1fa308e4ea4dc2cc6a11178",
+    "harness_runner_source_sha256": "f25cdfb215977651758ca10d63507c0b4b86240c4a336f0b7db02b1e183fe990",
+    "artifact_normalizer_source_sha256": "073b7fff7b8b957fd0752128915f0b0afc7120a9d8a5993e7ca90117c9fcb1d6",
     "provider_source_sha256": "683ad36931344528f58d86497fdb44c70848af05de2b97a11a7195d74173306f",
     "profile_registry_source_sha256": "a1fb55b8ac27c8715feeeeac8f0df61f8d789514c4c12faf9508a25dfe466d26",
-    "provider_capability_registry_source_sha256": "0700878e343fbb86657e3f2469eb7f3d6303637126c64b3c2e0b0b60fa9330ca",
-    "harness_manifest_source_sha256": "8f5a7fe55ef2bfef27e840efcaaefc17760800c631235c763bed20eaa71d9a34",
-    "harness_package_source_sha256": "a988be2f0bb8c2eb1404083342465e9287d796eaa5354dfb93891020a1280b5e",
+    "provider_capability_registry_source_sha256": "d0c09ed8df6b8ab2704045e71f7d7719c4d3639e028d156f7a6e58783661a3a5",
+    "harness_manifest_source_sha256": "519d1d8c420e59de7a23369fc38d5fa850bfda65ce6b2a9677fb9c3e7c0ee5af",
+    "harness_package_source_sha256": "27e0b708e749e16b666fe1aa610257f847b6651cd1fa88512d23e068d9e6fa8e",
     "run_evals_source_sha256": "bb9d15adae63f5cedbb5f972ac1b38a0e0524b89651e73713fa8d606f26803f8",
     "holdout_plan_source_sha256": "3bf136f2f904fe5d97147c5a0c9065c9f766c390c5403e1bf585ff8428ec61a3",
     "prepare_holdout_plan_source_sha256": "dd841c84c633677d81b41f5ddd858cb7873dcc3e3a5b76604be5ff1873a04d0f",

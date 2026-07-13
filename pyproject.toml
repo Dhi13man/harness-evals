@@ -24,7 +24,7 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Topic :: Software Development :: Quality Assurance",
 ]
-dependencies = []
+dependencies = ["rfc8785==0.1.4"]
 
 [project.optional-dependencies]
 test = ["jsonschema==4.25.1", "referencing==0.37.0"]

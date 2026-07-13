@@ -171,23 +171,22 @@ PR 1 establishes package-safe profile identity and comparator absence. PR 2 make
 
 ### Deliverable Commits
 
-1. `feat(artifacts): normalize declared case outputs` introduces suite schema v7 with focused compatibility-default, raw/normalized size, structural resource bound, canonicalization, malformed-output, hash, and fingerprint tests.
-2. `feat(verifiers): mount normalized artifacts read-only` with focused isolation, environment, mutation, pristine-fixture, workspace-canary, and provenance tests.
-3. `feat(comparator): compare declared artifacts` with focused profile-support, payload, blinding, preflight, and non-leakage tests.
-4. `test(artifacts): exercise malformed and drifting outputs` as independent cross-contract coverage.
-5. `docs(artifacts): document output evaluation contracts`.
+1. `feat(artifacts): normalize declared case outputs` introduces suite schema v7, compatibility defaults, bounded LF text and RFC 8785 JSON normalization, capability revision 2, case-fingerprint binding, and focused contract tests.
+2. `feat(verifiers): mount normalized artifacts read-only` delivers canonical artifacts through a separate read-only mount and gives final-output cases a pristine read-only fixture workspace.
+3. `feat(artifacts): gate declared output compatibility` rejects unsupported profile kinds before dispatch and malformed provider output before verification or judgment.
+4. `docs(artifacts): document output evaluation contracts` records the migration and the calibrated-comparator boundary.
 
 ### Exit Criteria
 
-- Suite schema v7 requires one `artifact_contract` per case; suite schema v2-v6 cases retain the `workspace_diff` compatibility default without changing raw bytes/hash.
-- `workspace_diff`, `final_output_text`, and `final_output_json` are the only accepted kinds, one artifact exists per arm, and fixtures remain required. Raw captured output and normalized content are each capped at 1 MiB before and after decoding or canonicalization.
+- Suite schema v7 requires one `artifact_contract` per case; suite schema v2-v6 cases retain the `workspace_diff` compatibility default without changing raw bytes, manifest hashes, or historical case fingerprints.
+- `workspace_diff`, `final_output_text`, and `final_output_json` are the only accepted kinds, one selected artifact exists per successful arm, and fixtures remain required. The provider's extracted semantic string and normalized content are each capped at 1 MiB; transport-envelope limits remain adapter-owned.
 - Text requires strict UTF-8 without BOM, normalizes CRLF/CR to LF, performs no Unicode normalization, and preserves trailing whitespace and terminal-newline presence. JSON requires strict UTF-8 without BOM and RFC 8785 canonicalization; parsing rejects duplicate keys, non-finite numbers, trailing prose, fenced extraction, depth over 64, more than 10,000 aggregate members, strings over 256 KiB, and number tokens over 128 bytes before canonical serialization.
 - Normalized artifacts use fixed media types, canonical content bytes, `artifact.txt` or `artifact.json`, byte count, canonicalization contract/version, and SHA-256.
-- Verifiers receive the artifact through a read-only mount with `EVAL_ARTIFACT_PATH`, `EVAL_ARTIFACT_KIND`, and `EVAL_ARTIFACT_SHA256`; the candidate cannot precreate, replace, or mutate it. `workspace_diff` verifiers retain the candidate workspace, while final-output verifiers receive only a pristine read-only fixture workspace and cannot address or observe the candidate-mutated tree. Canary tests prove candidate workspace mutations cannot change final-output verifier or comparator decisions.
-- Final output enters comparison only when the case explicitly opts into a final-output contract.
-- Profiles declare `supported_artifact_kinds`; unsupported profile/artifact combinations fail before provider or comparator dispatch. The bundled software profile remains `workspace_diff`-only unless separately recalibrated.
+- Verifiers receive the artifact through a read-only mount with `EVAL_ARTIFACT_PATH`, `EVAL_ARTIFACT_KIND`, and `EVAL_ARTIFACT_SHA256`; the candidate cannot precreate, replace, or mutate it. `workspace_diff` verifiers retain a disposable candidate-workspace copy, while final-output verifiers receive only a pristine read-only fixture workspace and cannot address or observe the candidate-mutated tree.
+- Final output becomes the selected artifact only when the case explicitly opts into a final-output contract; it cannot enter judged comparison until a calibrated profile supports that kind.
+- Profiles declare `supported_artifact_kinds`; unsupported profile/artifact combinations fail before provider or comparator dispatch. Both bundled calibrated profiles remain `workspace_diff`-only. Objective suites support final text and JSON now; judged final outputs require a future separately calibrated profile and request adapter.
 - Profile incompatibility, artifact mutation, oversized output, canonical-content drift, and holdout fingerprint drift fail before judgment or release authorization.
-- Artifact-specific verifier/comparator isolation smoke, both calibration tracks, and the complete-stack production-sandbox smoke pass before this PR merges.
+- Artifact-specific verifier isolation, malformed-output failure timing, both calibration tracks, and the complete stack pass before this PR merges.
 
 ## Top Risks
 

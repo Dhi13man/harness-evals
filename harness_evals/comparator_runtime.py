@@ -1094,6 +1094,7 @@ class ComparatorRuntime:
     release_summary: dict[str, Any]
     certification: RuntimeCertification
     profile_id: str | None = None
+    supported_artifact_kinds: tuple[str, ...] = ("workspace_diff",)
     profile_descriptor_sha256: str | None = None
     profile_authority_registry_sha256: str | None = None
     profile_authority_scope: str | None = None
@@ -1287,6 +1288,7 @@ class ComparatorRuntime:
                 summary,
                 certification,
                 profile_id=profile.descriptor.id,
+                supported_artifact_kinds=profile.descriptor.supported_artifact_kinds,
                 profile_descriptor_sha256=profile.descriptor.descriptor_sha256,
                 profile_authority_registry_sha256=(
                     profile.authority_binding.registry_sha256

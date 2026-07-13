@@ -87,6 +87,12 @@ class VerifierSpec:
 
 
 @dataclass(frozen=True)
+class ArtifactContractSpec:
+    kind: str
+    declared: bool
+
+
+@dataclass(frozen=True)
 class CaseSpec:
     id: str
     skill: str
@@ -99,6 +105,7 @@ class CaseSpec:
     timeout_seconds: int
     critical_expectations: tuple[str, ...]
     comparator_contract: dict[str, Any] | None
+    artifact_contract: ArtifactContractSpec
 
 
 @dataclass(frozen=True)
@@ -770,6 +777,7 @@ def _parse_cases(
     *,
     require_comparator_contract: bool,
     require_bundle_source: bool,
+    require_artifact_contract: bool,
     comparator_contract_vocabulary: dict[str, frozenset[str]] | None,
 ) -> tuple[CaseSpec, ...]:
     items = _list(raw, "cases", minimum=1)
@@ -786,12 +794,19 @@ def _parse_cases(
         "timeout_seconds",
         "critical_expectations",
         "comparator_contract",
+        "artifact_contract",
     }
-    required_case_fields = case_fields - {"comparator_contract", "bundle_source"}
+    required_case_fields = case_fields - {
+        "artifact_contract",
+        "comparator_contract",
+        "bundle_source",
+    }
     if require_comparator_contract:
         required_case_fields.add("comparator_contract")
     if require_bundle_source:
         required_case_fields.add("bundle_source")
+    if require_artifact_contract:
+        required_case_fields.add("artifact_contract")
     allowed_case_fields = required_case_fields
     verifier_fields = {"argv", "timeout_seconds", "required_tools"}
     for index, item in enumerate(items):
@@ -910,10 +925,25 @@ def _parse_cases(
                     if require_comparator_contract
                     else None
                 ),
+                artifact_contract=(
+                    _parse_artifact_contract(
+                        data["artifact_contract"], f"{location}.artifact_contract"
+                    )
+                    if require_artifact_contract
+                    else ArtifactContractSpec(kind="workspace_diff", declared=False)
+                ),
             )
         )
     _unique_ids([case.id for case in cases], "cases")
     return tuple(cases)
+
+
+def _parse_artifact_contract(raw: Any, location: str) -> ArtifactContractSpec:
+    value = _object(raw, location, required={"kind"}, allowed={"kind"})
+    kind = _string(value["kind"], f"{location}.kind")
+    if kind not in {"workspace_diff", "final_output_text", "final_output_json"}:
+        raise ManifestError(f"{location}.kind is unsupported")
+    return ArtifactContractSpec(kind=kind, declared=True)
 
 
 def _exact_repetitions(value: Any, location: str) -> int:
@@ -1081,7 +1111,7 @@ def load_suite(path: str | Path) -> SuiteSpec:
     if not isinstance(data, dict):
         raise ManifestError("suite must be an object")
     schema_version = _integer(
-        data.get("schema_version"), "schema_version", minimum=2, maximum=6
+        data.get("schema_version"), "schema_version", minimum=2, maximum=7
     )
     common_fields = {
         "$schema",
@@ -1187,6 +1217,7 @@ def load_suite(path: str | Path) -> SuiteSpec:
         suite_root,
         require_comparator_contract=evaluation_mode == "judged",
         require_bundle_source=schema_version >= 4,
+        require_artifact_contract=schema_version >= 7,
         comparator_contract_vocabulary=_comparator_contract_vocabulary(
             comparator_profile
         ),
