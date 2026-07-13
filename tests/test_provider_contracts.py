@@ -930,6 +930,91 @@ class HoldoutProviderContractTests(unittest.TestCase):
             plan.generator_provider.execution_policy["release_authoritative"]
         )
 
+    def test_schema_v3_source_bindings_are_exact_and_canonical(self) -> None:
+        payload = copy.deepcopy(self.payload)
+        payload["schema_version"] = 3
+        payload.pop("candidate_commit")
+        payload.pop("original_commit")
+        payload["evaluation_mode"] = "judged"
+        payload["comparator_calibration_evidence_sha256"] = "3" * 64
+        payload["comparator_profile_id"] = "software-engineering-v2.3"
+        payload["comparator_profile_descriptor_sha256"] = "4" * 64
+        payload["comparator_profile_authority_registry_sha256"] = "5" * 64
+        case_ids = sorted(case["id"] for case in payload["cases"])
+        payload["source_bindings"] = [
+            {
+                "variant_id": variant_id,
+                "kind": kind,
+                "source_commit": commit,
+                "source_sha256_by_case": {case_id: digest for case_id in case_ids},
+            }
+            for variant_id, kind, commit, digest in (
+                ("candidate", "worktree", "e" * 64, "1" * 64),
+                ("original", "git_ref", "f" * 40, "2" * 64),
+            )
+        ]
+        self.assertFalse(list(Draft202012Validator(self.schema).iter_errors(payload)))
+        self.save(payload)
+        plan = load_holdout_plan(self.path)
+        self.assertEqual(plan.schema_version, 3)
+        self.assertEqual(plan.evaluation_mode, "judged")
+        self.assertEqual(
+            tuple(binding.variant_id for binding in plan.source_bindings),
+            ("candidate", "original"),
+        )
+
+        mutations = {
+            "legacy commit": lambda value: value.__setitem__(
+                "candidate_commit", "e" * 40
+            ),
+            "missing variant": lambda value: value["source_bindings"].pop(),
+            "reordered variants": lambda value: value["source_bindings"].reverse(),
+            "missing case": lambda value: value["source_bindings"][0][
+                "source_sha256_by_case"
+            ].pop(case_ids[0]),
+            "null worktree commit": lambda value: value["source_bindings"][
+                0
+            ].__setitem__("source_commit", None),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                invalid = copy.deepcopy(payload)
+                mutate(invalid)
+                if label in {"missing variant", "reordered variants", "missing case"}:
+                    self.save(invalid)
+                    with self.assertRaises(HoldoutPlanError):
+                        load_holdout_plan(self.path)
+                else:
+                    self.assert_schema_and_parser_reject(invalid)
+
+        objective = copy.deepcopy(payload)
+        objective["evaluation_mode"] = "objective_only"
+        for field in (
+            "comparator_release_sha256",
+            "comparator_calibration_evidence_sha256",
+            "comparator_profile_id",
+            "comparator_profile_descriptor_sha256",
+            "comparator_profile_authority_registry_sha256",
+        ):
+            objective.pop(field)
+        objective["objective_acceptance_policy_id"] = "verifier-pass-v1"
+        objective["objective_acceptance_policy_sha256"] = "6" * 64
+        self.assertFalse(list(Draft202012Validator(self.schema).iter_errors(objective)))
+        self.save(objective)
+        objective_plan = load_holdout_plan(self.path)
+        self.assertEqual(objective_plan.evaluation_mode, "objective_only")
+        self.assertIsNone(objective_plan.comparator_release_sha256)
+
+        objective_with_comparator = copy.deepcopy(objective)
+        objective_with_comparator["comparator_release_sha256"] = "7" * 64
+        self.assert_schema_and_parser_reject(objective_with_comparator)
+        judged_with_objective = copy.deepcopy(payload)
+        judged_with_objective["objective_acceptance_policy_id"] = "verifier-pass-v1"
+        self.assert_schema_and_parser_reject(judged_with_objective)
+        objective_without_policy = copy.deepcopy(objective)
+        objective_without_policy.pop("objective_acceptance_policy_sha256")
+        self.assert_schema_and_parser_reject(objective_without_policy)
+
     def test_holdout_parser_and_schema_reject_billing_policy_mutations(self) -> None:
         mutations: list[dict[str, object]] = []
         for changes in (

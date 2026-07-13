@@ -552,6 +552,26 @@ class SuiteFixture:
             case["bundle_source"] = bundle_source
         self.save_manifest()
 
+    def use_v5_judged(
+        self,
+        comparison_ids: tuple[str, ...] = ("without-current", "old-current"),
+        bundle_source: str = "skills/demo",
+    ) -> None:
+        self.use_v4_judged(bundle_source)
+        self.manifest["schema_version"] = 5
+        self.manifest["holdout"] = {"comparison_ids": list(comparison_ids)}
+        self.save_manifest()
+
+    def use_v5_objective(
+        self,
+        comparison_ids: tuple[str, ...] = ("without-current", "old-current"),
+        bundle_source: str = "skills/demo",
+    ) -> None:
+        self.use_v4_objective(bundle_source)
+        self.manifest["schema_version"] = 5
+        self.manifest["holdout"] = {"comparison_ids": list(comparison_ids)}
+        self.save_manifest()
+
     def isolate_basic_case(self) -> None:
         case_root = "cases/basic"
         self._write_suite(f"{case_root}/prompt.md", "Fix and verify the result.\n")
@@ -2317,6 +2337,74 @@ print(json.dumps({"passed": False, "assertions": [{"id": "answer-present", "pass
             version_two_fingerprint,
             "bb56f030d871f9cb5af42d1fae523140be90136caba30c335736f9401852e72c",
         )
+
+    def test_v5_source_fingerprint_binds_locator_paths_bytes_and_modes(self) -> None:
+        self.fixture.use_v5_judged()
+        suite = self.load()
+        case = suite.cases[0]
+        git_hash = runner_module._git_source_fingerprint(
+            self.fixture.repository,
+            self.fixture.treatment_commit,
+            case,
+            ignore_generated_caches=True,
+            canonical=True,
+        )
+        worktree_hash = runner_module._worktree_source_fingerprint(
+            self.fixture.repository,
+            case,
+            ignore_empty_directories=True,
+            canonical=True,
+        )
+        self.assertEqual(git_hash, worktree_hash)
+
+        alternate_bundle = self.fixture.repository / "skills/demo-copy"
+        shutil.copytree(self.fixture.repository / "skills/demo", alternate_bundle)
+        locator_case = replace(
+            case, bundle_source=case.bundle_source.parent / "demo-copy"
+        )
+        locator_hash = runner_module._worktree_source_fingerprint(
+            self.fixture.repository,
+            locator_case,
+            ignore_empty_directories=True,
+            canonical=True,
+        )
+        self.assertNotEqual(locator_hash, worktree_hash)
+
+        entrypoint = self.fixture.repository / "skills/demo/SKILL.md"
+        entrypoint.chmod(0o755)
+        try:
+            executable_hash = runner_module._worktree_source_fingerprint(
+                self.fixture.repository,
+                case,
+                ignore_empty_directories=True,
+                canonical=True,
+            )
+        finally:
+            entrypoint.chmod(0o644)
+        self.assertNotEqual(executable_hash, worktree_hash)
+
+        context_copy = self.fixture.repository / "context-copy.md"
+        context_copy.write_bytes(entrypoint.read_bytes())
+        context_case = replace(
+            case,
+            context_files=(case.bundle_source.parent.parent / "context-copy.md",),
+        )
+        context_path_hash = runner_module._worktree_source_fingerprint(
+            self.fixture.repository,
+            context_case,
+            ignore_empty_directories=True,
+            canonical=True,
+        )
+        self.assertNotEqual(context_path_hash, worktree_hash)
+
+        context_copy.write_text("changed context\n", encoding="utf-8")
+        context_bytes_hash = runner_module._worktree_source_fingerprint(
+            self.fixture.repository,
+            context_case,
+            ignore_empty_directories=True,
+            canonical=True,
+        )
+        self.assertNotEqual(context_bytes_hash, context_path_hash)
 
     def test_ab_ba_detects_position_bias_and_seed_reproduces_mapping(self) -> None:
         provider_one = self.fixture.provider(comparator_always_a=True)
@@ -4394,6 +4482,24 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
         case_records = copy.deepcopy(self.payload["cases"])
         return cases, comparisons, source_records, case_records
 
+    def objective_v5_suite(self) -> SuiteSpec:
+        self.fixture.manifest["schema_version"] = 5
+        self.fixture.manifest["evaluation_mode"] = "objective_only"
+        self.fixture.manifest.pop("comparator")
+        self.fixture.manifest.pop("comparator_profile", None)
+        self.fixture.manifest["shared_verifier_dir"] = None
+        self.fixture.manifest["holdout"] = {"comparison_ids": list(self.comparison_ids)}
+        self.fixture.manifest["cases"] = [
+            case
+            for case in self.fixture.manifest["cases"]
+            if case["skill"] == "engineering"
+        ]
+        for case in self.fixture.manifest["cases"]:
+            case["bundle_source"] = "skills/engineering"
+            case.pop("comparator_contract")
+        self.fixture.save_manifest()
+        return load_suite(self.fixture.manifest_path)
+
     def test_non_authoritative_generator_rejects_holdout_before_agent_turns(
         self,
     ) -> None:
@@ -5050,8 +5156,26 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
             hashlib.sha256(output.read_bytes()).hexdigest(), result["plan_sha256"]
         )
         plan = load_holdout_plan(output)
-        self.assertEqual(plan.candidate_commit, self.fixture.treatment_commit)
-        self.assertEqual(plan.original_commit, self.fixture.baseline_commit)
+        self.assertEqual(plan.schema_version, 3)
+        bindings = {binding.variant_id: binding for binding in plan.source_bindings}
+        self.assertEqual(
+            bindings["candidate"].source_commit, self.fixture.treatment_commit
+        )
+        self.assertEqual(
+            bindings["original"].source_commit, self.fixture.baseline_commit
+        )
+        self.assertIsNone(bindings["no-skill"].source_commit)
+        self.assertEqual(
+            {binding.kind for binding in plan.source_bindings},
+            {"git_ref", "without_skill", "worktree"},
+        )
+        self.assertTrue(
+            all(
+                tuple(case_id for case_id, _digest in binding.source_sha256_by_case)
+                == tuple(sorted(case.id for case in plan.cases))
+                for binding in plan.source_bindings
+            )
+        )
         self.assertEqual(
             plan.consumption_record_path,
             output.with_name(f"{output.name}.consumption.json"),
@@ -5126,6 +5250,268 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
         self.assertFalse(consumed_output.exists())
         self.assertEqual(self.provider.agent_requests, [])
         self.assertEqual(self.provider.comparator_requests, [])
+
+    def test_schema_v5_prepares_generic_source_bindings_without_reserved_ids(
+        self,
+    ) -> None:
+        external_worktree = self.fixture.root / "external-treatment"
+        subprocess.run(
+            [
+                "git",
+                "clone",
+                "-q",
+                str(self.fixture.repository),
+                str(external_worktree),
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(external_worktree),
+                "config",
+                "user.email",
+                "external@example.invalid",
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(external_worktree),
+                "config",
+                "user.name",
+                "External Tests",
+            ],
+            check=True,
+        )
+        for skill in ("engineering", "testing"):
+            path = external_worktree / f"skills/{skill}/SKILL.md"
+            path.write_text(
+                path.read_text(encoding="utf-8") + "\nExternal treatment.\n",
+                encoding="utf-8",
+            )
+        subprocess.run(
+            ["git", "-C", str(external_worktree), "add", "skills"],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(external_worktree),
+                "commit",
+                "-q",
+                "-m",
+                "external treatment",
+            ],
+            check=True,
+        )
+        self.fixture.manifest["schema_version"] = 5
+        self.fixture.manifest["evaluation_mode"] = "judged"
+        self.fixture.manifest["comparator_profile"] = {
+            "kind": "builtin",
+            "id": "software-engineering-v2.3",
+        }
+        self.fixture.manifest["shared_verifier_dir"] = None
+        variant_ids = {
+            "no-skill": "blank",
+            "original": "reference",
+            "candidate": "treatment",
+        }
+        for variant in self.fixture.manifest["variants"]:
+            variant["id"] = variant_ids[variant["id"]]
+            if variant["id"] == "treatment":
+                variant["root"] = Path(
+                    os.path.relpath(external_worktree, self.fixture.suite_root)
+                ).as_posix()
+        comparison_ids = ("reference-treatment", "blank-treatment")
+        for comparison, comparison_id in zip(
+            self.fixture.manifest["comparisons"], comparison_ids, strict=True
+        ):
+            comparison["id"] = comparison_id
+            comparison["control"] = variant_ids[comparison["control"]]
+            comparison["treatment"] = variant_ids[comparison["treatment"]]
+        self.fixture.manifest["holdout"] = {"comparison_ids": list(comparison_ids)}
+        for case in self.fixture.manifest["cases"]:
+            case["bundle_source"] = f"skills/{case['skill']}"
+        self.fixture.save_manifest()
+        suite = load_suite(self.fixture.manifest_path)
+        runner = self.production_runner(self.runner(suite, production=False))
+        output = self.fixture.root / "generic-source-plan.json"
+
+        result = runner.prepare_holdout_plan(
+            output_path=output,
+            plan_id="generic-source-v1",
+            reviewers=("reviewer-a",),
+            freeze_record="review:freeze:generic-source-v1",
+            seal_record="review:seal:generic-source-v1",
+        )
+        plan = load_holdout_plan(output)
+        schema = json.loads(
+            (HARNESS_ROOT / "holdout-plan.schema.json").read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(plan.schema_version, 3)
+        self.assertFalse(
+            list(
+                Draft202012Validator(schema).iter_errors(
+                    json.loads(output.read_text(encoding="utf-8"))
+                )
+            )
+        )
+        self.assertEqual(
+            tuple(binding.variant_id for binding in plan.source_bindings),
+            ("blank", "reference", "treatment"),
+        )
+        bindings = {
+            binding.variant_id: binding.as_json() for binding in plan.source_bindings
+        }
+        self.assertIsNone(bindings["blank"]["source_commit"])
+        self.assertEqual(
+            set(bindings["blank"]["source_sha256_by_case"].values()),
+            {runner_module.EMPTY_SOURCE_SHA256},
+        )
+        self.assertEqual(
+            result["preflight"]["selection"]["comparison_ids"],
+            list(comparison_ids),
+        )
+        for case in suite.cases:
+            self.assertNotEqual(
+                bindings["reference"]["source_sha256_by_case"][case.id],
+                bindings["treatment"]["source_sha256_by_case"][case.id],
+            )
+
+    def test_schema_v5_objective_holdout_seals_policy_without_comparator(self) -> None:
+        suite = self.objective_v5_suite()
+        runner = EvalRunner(suite)
+        self.addCleanup(runner.close)
+
+        def treatment_only(request):
+            if request.variant_id == "candidate":
+                (request.workspace / "answer.txt").write_text(
+                    "accepted treatment", encoding="utf-8"
+                )
+            return "objective result"
+
+        runner.agent_provider._agent_handler = treatment_only
+        output = self.fixture.root / "objective-holdout-plan.json"
+        result_dir = self.fixture.root / "objective-holdout-result"
+        with (
+            patch.object(
+                runner, "_assert_generator_release_authority", return_value=None
+            ),
+            patch.object(
+                runner,
+                "_production_generator_release_authoritative",
+                return_value=True,
+            ),
+        ):
+            prepared = runner.prepare_holdout_plan(
+                output_path=output,
+                plan_id="objective-holdout-v1",
+                reviewers=("reviewer-a",),
+                freeze_record="review:freeze:objective-holdout-v1",
+                seal_record="review:seal:objective-holdout-v1",
+            )
+            result = runner.run(
+                RunSelection(
+                    split="holdout",
+                    comparison_ids=self.comparison_ids,
+                    holdout_plan=output,
+                ),
+                output_dir=result_dir,
+            )
+
+        plan = load_holdout_plan(output)
+        self.assertEqual(plan.evaluation_mode, "objective_only")
+        self.assertIsNone(plan.comparator_release_sha256)
+        self.assertEqual(
+            plan.objective_acceptance_policy_id,
+            runner_module._OBJECTIVE_ACCEPTANCE_POLICY["policy_id"],
+        )
+        self.assertEqual(
+            plan.objective_acceptance_policy_sha256,
+            runner_module._OBJECTIVE_ACCEPTANCE_POLICY_SHA256,
+        )
+        self.assertIsNone(prepared["preflight"]["comparator"])
+        self.assertNotIn(
+            "comparator_release_sha256", prepared["preflight"]["holdout_plan"]
+        )
+        self.assertTrue(result["aggregate"]["final_release_authorized"])
+        self.assertTrue(result["passed"])
+        self.assertNotIn(
+            "comparator-spend", {path.name for path in result_dir.iterdir()}
+        )
+
+    def test_generic_holdout_rejects_cross_authority_substitution(self) -> None:
+        suite = self.objective_v5_suite()
+        runner = EvalRunner(suite)
+        self.addCleanup(runner.close)
+        output = self.fixture.root / "objective-authority-plan.json"
+        with (
+            patch.object(
+                runner, "_assert_generator_release_authority", return_value=None
+            ),
+            patch.object(
+                runner,
+                "_production_generator_release_authoritative",
+                return_value=True,
+            ),
+        ):
+            runner.prepare_holdout_plan(
+                output_path=output,
+                plan_id="objective-authority-v1",
+                reviewers=("reviewer-a",),
+                freeze_record="review:freeze:objective-authority-v1",
+                seal_record="review:seal:objective-authority-v1",
+            )
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            first_case = sorted(payload["source_bindings"][0]["source_sha256_by_case"])[
+                0
+            ]
+            mutations = (
+                (
+                    "objective acceptance authority",
+                    lambda value: value.__setitem__(
+                        "objective_acceptance_policy_sha256", "f" * 64
+                    ),
+                ),
+                (
+                    "source bindings",
+                    lambda value: value["source_bindings"][0][
+                        "source_sha256_by_case"
+                    ].__setitem__(first_case, "e" * 64),
+                ),
+                (
+                    "invalid holdout plan",
+                    lambda value: value.__setitem__(
+                        "comparator_release_sha256", "d" * 64
+                    ),
+                ),
+                (
+                    "invalid holdout plan",
+                    lambda value: value["source_bindings"].reverse(),
+                ),
+            )
+            for index, (message, mutate) in enumerate(mutations):
+                with self.subTest(mutation=message):
+                    invalid = copy.deepcopy(payload)
+                    mutate(invalid)
+                    plan_path = self.fixture.save_holdout_plan(
+                        invalid, name=f"objective-authority-invalid-{index}.json"
+                    )
+                    with self.assertRaisesRegex(RunnerError, message):
+                        runner.preflight(
+                            RunSelection(
+                                split="holdout",
+                                comparison_ids=self.comparison_ids,
+                                holdout_plan=plan_path,
+                            )
+                        )
+        self.assertEqual(runner.agent_provider.agent_requests, [])
 
     def test_holdout_consumption_is_one_shot_across_roots_copies_and_crashes(
         self,
@@ -6035,6 +6421,124 @@ class ManifestValidationTests(unittest.TestCase):
                 with self.assertRaises(ManifestError):
                     load_suite(self.fixture.manifest_path)
 
+    def test_v5_declares_canonical_release_comparison_ids(self) -> None:
+        schema = json.loads((HARNESS_ROOT / "suite.schema.json").read_text())
+        self.fixture.use_v5_objective(("release-alpha", "release-beta"))
+        self.fixture.manifest["variants"] = [
+            {"id": "empty-arm", "kind": "without_skill"},
+            {
+                "id": "archive-arm",
+                "kind": "git_ref",
+                "git_ref": self.fixture.baseline_commit,
+            },
+            {
+                "id": "trial-arm",
+                "kind": "worktree",
+                "root": "..",
+                "source_ref": self.fixture.treatment_commit,
+            },
+            {"id": "unused-arm", "kind": "without_skill"},
+        ]
+        self.fixture.manifest["comparisons"] = [
+            {
+                "id": "release-alpha",
+                "control": "empty-arm",
+                "treatment": "trial-arm",
+                "repetitions": 3,
+                "comparator_order": "ab_ba",
+            },
+            {
+                "id": "release-beta",
+                "control": "archive-arm",
+                "treatment": "trial-arm",
+                "repetitions": 3,
+                "comparator_order": "ab_ba",
+            },
+            {
+                "id": "diagnostic-only",
+                "control": "archive-arm",
+                "treatment": "empty-arm",
+                "repetitions": 3,
+                "comparator_order": "ab_ba",
+            },
+        ]
+        self.fixture.save_manifest()
+        valid = copy.deepcopy(self.fixture.manifest)
+        self.assertEqual(list(Draft202012Validator(schema).iter_errors(valid)), [])
+        suite = load_suite(self.fixture.manifest_path)
+        self.assertEqual(
+            suite.holdout_comparison_ids, ("release-alpha", "release-beta")
+        )
+        self.assertNotIn("unused-arm", suite.holdout_comparison_ids)
+        self.assertNotIn("diagnostic-only", suite.holdout_comparison_ids)
+
+        structural_mutations: list[dict[str, object]] = []
+        missing = copy.deepcopy(valid)
+        del missing["holdout"]
+        structural_mutations.append(missing)
+        empty = copy.deepcopy(valid)
+        empty["holdout"]["comparison_ids"] = []
+        structural_mutations.append(empty)
+        duplicate = copy.deepcopy(valid)
+        duplicate["holdout"]["comparison_ids"] = ["release-alpha", "release-alpha"]
+        structural_mutations.append(duplicate)
+        invalid_id = copy.deepcopy(valid)
+        invalid_id["holdout"]["comparison_ids"] = ["Invalid ID"]
+        structural_mutations.append(invalid_id)
+        extra = copy.deepcopy(valid)
+        extra["holdout"]["unexpected"] = True
+        structural_mutations.append(extra)
+        for mutation in structural_mutations:
+            with self.subTest(structural=mutation):
+                self.assertTrue(
+                    list(Draft202012Validator(schema).iter_errors(mutation))
+                )
+                self.fixture.manifest = mutation
+                self.fixture.save_manifest()
+                with self.assertRaises(ManifestError):
+                    load_suite(self.fixture.manifest_path)
+
+        semantic_mutations = []
+        unknown = copy.deepcopy(valid)
+        unknown["holdout"]["comparison_ids"] = ["missing-comparison"]
+        semantic_mutations.append(unknown)
+        reordered = copy.deepcopy(valid)
+        reordered["holdout"]["comparison_ids"] = ["release-beta", "release-alpha"]
+        semantic_mutations.append(reordered)
+        for mutation in semantic_mutations:
+            with self.subTest(semantic=mutation):
+                self.assertEqual(
+                    list(Draft202012Validator(schema).iter_errors(mutation)), []
+                )
+                self.fixture.manifest = mutation
+                self.fixture.save_manifest()
+                with self.assertRaises(ManifestError):
+                    load_suite(self.fixture.manifest_path)
+
+        for version in (2, 3, 4):
+            self.fixture.manifest = self.fixture._manifest()
+            if version == 3:
+                self.fixture.use_v3_judged()
+            elif version == 4:
+                self.fixture.use_v4_judged()
+            self.fixture.manifest["holdout"] = {"comparison_ids": ["without-current"]}
+            self.fixture.save_manifest()
+            with self.subTest(legacy_version=version):
+                self.assertTrue(
+                    list(
+                        Draft202012Validator(schema).iter_errors(self.fixture.manifest)
+                    )
+                )
+                with self.assertRaises(ManifestError):
+                    load_suite(self.fixture.manifest_path)
+
+        self.fixture.manifest = self.fixture._manifest()
+        self.fixture.use_v5_judged(("without-current",))
+        self.assertEqual(
+            load_suite(self.fixture.manifest_path).holdout_comparison_ids,
+            ("without-current",),
+        )
+
     def test_shared_verifier_dir_versions_null_and_configured(self) -> None:
         schema = json.loads((HARNESS_ROOT / "suite.schema.json").read_text())
         self.assertIsNone(load_suite(self.fixture.manifest_path).shared_verifier_dir)
@@ -6789,7 +7293,10 @@ class CheckedInSuiteTests(unittest.TestCase):
             (HARNESS_ROOT / "holdout-plan.schema.json").read_text(encoding="utf-8")
         )
         self.assertFalse(schema["additionalProperties"])
-        self.assertEqual(schema["properties"]["schema_version"]["const"], 2)
+        self.assertEqual(schema["properties"]["schema_version"]["enum"], [2, 3])
+        self.assertEqual(len(schema["oneOf"]), 3)
+        self.assertIn("source_bindings", schema["properties"])
+        self.assertIn("evaluation_mode", schema["properties"])
         provenance = schema["properties"]["provenance"]
         self.assertEqual(
             provenance["properties"]["assurance"]["const"],
@@ -6799,8 +7306,8 @@ class CheckedInSuiteTests(unittest.TestCase):
             provenance["properties"]["privacy_claim"]["const"],
             "not-a-cryptographic-privacy-proof",
         )
-        self.assertIn("comparator_release_sha256", schema["required"])
-        self.assertIn("comparator_calibration_evidence_sha256", schema["required"])
+        self.assertNotIn("comparator_release_sha256", schema["required"])
+        self.assertNotIn("comparator_calibration_evidence_sha256", schema["required"])
         self.assertIn("generator_provider", schema["required"])
         self.assertIn("consumption_record_path", schema["required"])
         self.assertIn(
@@ -6812,13 +7319,18 @@ class CheckedInSuiteTests(unittest.TestCase):
             schema["properties"]["cases"]["items"]["required"],
         )
 
-    def test_suite_schema_supports_strict_v2_v3_and_v4_modes(self) -> None:
+    def test_suite_schema_supports_strict_v2_v3_v4_and_v5_modes(self) -> None:
         schema = json.loads(
             (HARNESS_ROOT / "suite.schema.json").read_text(encoding="utf-8")
         )
         self.assertEqual(
             [branch["$ref"] for branch in schema["oneOf"]],
-            ["#/$defs/suiteV2", "#/$defs/suiteV3", "#/$defs/suiteV4"],
+            [
+                "#/$defs/suiteV2",
+                "#/$defs/suiteV3",
+                "#/$defs/suiteV4",
+                "#/$defs/suiteV5",
+            ],
         )
         self.assertEqual(
             schema["$defs"]["suiteV2"]["properties"]["schema_version"]["const"], 2
@@ -6834,6 +7346,10 @@ class CheckedInSuiteTests(unittest.TestCase):
             schema["$defs"]["suiteV4"]["properties"]["schema_version"]["const"], 4
         )
         self.assertIn("shared_verifier_dir", schema["$defs"]["suiteV4"]["required"])
+        self.assertEqual(
+            schema["$defs"]["suiteV5"]["properties"]["schema_version"]["const"], 5
+        )
+        self.assertIn("holdout", schema["$defs"]["suiteV5"]["required"])
 
     def test_gcc_attestation_includes_derived_driver_closure(self) -> None:
         gcc = shutil.which("gcc")

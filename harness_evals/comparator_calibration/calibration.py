@@ -2167,14 +2167,19 @@ def validate_packaged_release_bindings(
     release = bundle.release
     runtime_adapter = release["runtime_adapter"]
     authority_path = suite_root / "baseline-authority.json"
-    authority_commit = require_baseline_authority(
-        suite_manifest_path,
-        authority_path,
-    )
-    if runtime_adapter["frozen_original_commit"] != authority_commit:
-        raise CalibrationError(
-            "release frozen original commit differs from baseline authority"
+    suite = load_json(suite_manifest_path)
+    schema_version = suite.get("schema_version")
+    if not isinstance(schema_version, int) or isinstance(schema_version, bool):
+        raise CalibrationError("suite schema version is invalid")
+    if schema_version < 5:
+        authority_commit = require_baseline_authority(
+            suite_manifest_path,
+            authority_path,
         )
+        if runtime_adapter["frozen_original_commit"] != authority_commit:
+            raise CalibrationError(
+                "release frozen original commit differs from baseline authority"
+            )
     runtime_sources = {
         "source_sha256": runtime_source_root / "comparator_runtime.py",
         "harness_runner_source_sha256": runtime_source_root / "runner.py",
@@ -2186,8 +2191,9 @@ def validate_packaged_release_bindings(
         "run_evals_source_sha256": runtime_source_root / "cli.py",
         "holdout_plan_source_sha256": runtime_source_root / "holdout_plan.py",
         "prepare_holdout_plan_source_sha256": runtime_source_root / "holdout_cli.py",
-        "baseline_authority_source_sha256": authority_path,
     }
+    if schema_version < 5:
+        runtime_sources["baseline_authority_source_sha256"] = authority_path
     for field, source_path in runtime_sources.items():
         if runtime_adapter[field] != file_sha256(source_path):
             raise CalibrationError(f"release {field} source hash is stale")
