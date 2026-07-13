@@ -11,6 +11,7 @@ import json
 import math
 import os
 import re
+import select
 import shutil
 import stat
 import subprocess
@@ -18,6 +19,7 @@ import tempfile
 import threading
 import time
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -58,6 +60,9 @@ MAX_FILE_BYTES = 64 * 1024 * 1024
 MAX_TREE_BYTES = 256 * 1024 * 1024
 MAX_TREE_ENTRIES = 16_384
 MAX_TREE_DEPTH = 64
+MAX_GIT_TREE_METADATA_BYTES = 128 * 1024 * 1024
+MAX_WORKTREE_SCAN_ENTRIES = MAX_TREE_ENTRIES * 4
+MAX_WORKTREE_SCAN_DEPTH = MAX_TREE_DEPTH * 4
 MAX_EXECUTABLE_BYTES = 256 * 1024 * 1024
 MAX_CODEX_EXECUTABLE_BYTES = 512 * 1024 * 1024
 PRIVATE_DIRECTORY_MODE = 0o700
@@ -1698,9 +1703,7 @@ class EvalRunner:
         runtime = None
         if selection.split == "holdout":
             if self.suite.evaluation_mode == "objective_only":
-                raise RunnerError(
-                    "objective-only holdout authority is not available in schema version 3"
-                )
+                raise RunnerError("objective-only holdout authority is unavailable")
             runtime = self._load_comparator_runtime()
             self._require_production_holdout_authority(runtime)
         cases, comparisons = self._selected(
@@ -1732,10 +1735,10 @@ class EvalRunner:
             for role in ("candidate", "original")
             if role in source_records
         }
-        shared_root = self.suite.root / "cases" / "testing" / "_shared"
+        shared_root = _effective_shared_verifier_dir(self.suite)
         self._shared_snapshot = (
             _snapshot_tree(shared_root, ignore_generated_caches=True)
-            if shared_root.is_dir()
+            if shared_root is not None
             else None
         )
         case_records: list[dict[str, Any]] = []
@@ -1749,7 +1752,7 @@ class EvalRunner:
                 ) from exc
             if not prompt.strip():
                 raise RunnerError(f"case {case.id} prompt is empty")
-            command = _resolve_verifier_command(self.suite.root, case)
+            command = _resolve_verifier_command(self.suite.root, case, shared_root)
             self._verifier_commands[case.id] = command
             interpreter = _attest_executable(Path(command[0]), Path(command[0]).name)
             tool_attestations = tuple(
@@ -2101,9 +2104,7 @@ class EvalRunner:
 
         self._ensure_open()
         if self.suite.evaluation_mode == "objective_only":
-            raise RunnerError(
-                "objective-only holdout authority is not available in schema version 3"
-            )
+            raise RunnerError("objective-only holdout authority is unavailable")
         runtime = self._load_comparator_runtime()
         self._require_production_holdout_authority(runtime)
         output = _new_external_plan_path(output_path, self.suite.root)
@@ -2579,9 +2580,7 @@ class EvalRunner:
             raise RunnerError("comparison selection must not contain duplicates")
         if selection.split == "holdout":
             if self.suite.evaluation_mode == "objective_only":
-                raise RunnerError(
-                    "objective-only holdout authority is not available in schema version 3"
-                )
+                raise RunnerError("objective-only holdout authority is unavailable")
             if allow_unsealed_holdout and selection.holdout_plan is not None:
                 raise RunnerError("holdout preparation cannot consume an existing plan")
             if not allow_unsealed_holdout and selection.holdout_plan is None:
@@ -2688,9 +2687,7 @@ class EvalRunner:
         if selection.split != "holdout":
             return
         if self.suite.evaluation_mode == "objective_only":
-            raise RunnerError(
-                "objective-only holdout authority is not available in schema version 3"
-            )
+            raise RunnerError("objective-only holdout authority is unavailable")
         if allow_unsealed_holdout and selection.holdout_plan is not None:
             raise RunnerError("holdout preparation cannot consume an existing plan")
         if not allow_unsealed_holdout and selection.holdout_plan is None:
@@ -2842,7 +2839,12 @@ class EvalRunner:
             commit = _resolve_git_ref(self.suite.repository_root, variant.git_ref)
             self._git_commits[variant.id] = commit
             for case in cases:
-                _git_skill_entries(self.suite.repository_root, commit, case.skill)
+                _git_bundle_entries(
+                    self.suite.repository_root,
+                    commit,
+                    case.bundle_source,
+                    ignore_generated_caches=self.suite.schema_version >= 4,
+                )
                 for context_file in case.context_files:
                     _git_blob(self.suite.repository_root, commit, context_file)
             return {
@@ -2863,17 +2865,24 @@ class EvalRunner:
             source_paths = _source_paths(cases)
             if _git_dirty(variant.root, source_paths):
                 raise RunnerError(
-                    f"variant {variant.id} skill/context source is dirty; commit it before A/B evaluation"
+                    f"variant {variant.id} bundle/context source is dirty; commit it before A/B evaluation"
                 )
             for case in cases:
-                skill_root = _safe_repo_file(
-                    variant.root, PurePosixPath("skills") / case.skill
-                )
-                if not skill_root.is_dir() or skill_root.is_symlink():
+                bundle_root = _safe_repo_file(variant.root, case.bundle_source)
+                if not bundle_root.is_dir() or bundle_root.is_symlink():
                     raise RunnerError(
-                        f"variant {variant.id} has no regular skill directory for {case.skill}"
+                        f"variant {variant.id} has no regular bundle directory at {case.bundle_source}"
                     )
-                _scan_tree(skill_root, ignore_generated_caches=True)
+                _scan_tree(
+                    bundle_root,
+                    ignore_generated_caches=True,
+                    ignore_empty_directories=self.suite.schema_version >= 4,
+                )
+                entrypoint = bundle_root / "SKILL.md"
+                if not entrypoint.is_file() or entrypoint.is_symlink():
+                    raise RunnerError(
+                        f"variant {variant.id} bundle has no regular SKILL.md entrypoint at {case.bundle_source}"
+                    )
                 for context_file in case.context_files:
                     context_path = _safe_repo_file(variant.root, context_file)
                     if not context_path.is_file() or context_path.is_symlink():
@@ -2881,10 +2890,17 @@ class EvalRunner:
                             f"variant {variant.id} context file is missing: {context_file}"
                         )
                 self._worktree_hashes[(variant.id, case.id)] = (
-                    _worktree_source_fingerprint(variant.root, case)
+                    _worktree_source_fingerprint(
+                        variant.root,
+                        case,
+                        ignore_empty_directories=self.suite.schema_version >= 4,
+                    )
                 )
                 expected_hash = _git_source_fingerprint(
-                    variant.root, source_commit, case
+                    variant.root,
+                    source_commit,
+                    case,
+                    ignore_generated_caches=self.suite.schema_version >= 4,
                 )
                 if self._worktree_hashes[(variant.id, case.id)] != expected_hash:
                     raise RunnerError(
@@ -3361,8 +3377,12 @@ class EvalRunner:
             commit = self._git_commits.get(variant.id)
             if commit is None:
                 raise RunnerError(f"variant {variant.id} was not preflighted")
-            _materialize_git_skill(
-                self.suite.repository_root, commit, case.skill, snapshot
+            _materialize_git_bundle(
+                self.suite.repository_root,
+                commit,
+                case.bundle_source,
+                snapshot,
+                ignore_generated_caches=self.suite.schema_version >= 4,
             )
             for context_file in case.context_files:
                 content = _git_blob(self.suite.repository_root, commit, context_file)
@@ -3382,15 +3402,22 @@ class EvalRunner:
                     f"variant {variant.id} source_ref was not preflighted"
                 )
             expected_hash = self._worktree_hashes.get((variant.id, case.id))
-            observed_hash = _worktree_source_fingerprint(variant.root, case)
+            observed_hash = _worktree_source_fingerprint(
+                variant.root,
+                case,
+                ignore_empty_directories=self.suite.schema_version >= 4,
+            )
             if expected_hash is None or observed_hash != expected_hash:
                 raise RunnerError(
                     f"variant {variant.id} skill/context source drifted after preflight"
                 )
-            skill_source = _safe_repo_file(
-                variant.root, PurePosixPath("skills") / case.skill
+            bundle_source = _safe_repo_file(variant.root, case.bundle_source)
+            _copy_tree(
+                bundle_source,
+                snapshot,
+                ignore_generated_caches=True,
+                ignore_empty_directories=self.suite.schema_version >= 4,
             )
-            _copy_tree(skill_source, snapshot, ignore_generated_caches=True)
             for context_file in case.context_files:
                 context_path = _safe_repo_file(variant.root, context_file)
                 try:
@@ -3427,11 +3454,11 @@ class EvalRunner:
         stored = self._case_snapshots.get(case.id)
         if stored is None:
             raise RunnerError(f"case {case.id} has no preflight source snapshot")
-        shared_root = self.suite.root / "cases" / "testing" / "_shared"
+        shared_root = _effective_shared_verifier_dir(self.suite)
         observed = _combined_case_hash(
             _snapshot_tree(case.prompt_file.parent, ignore_generated_caches=True),
             _snapshot_tree(shared_root, ignore_generated_caches=True)
-            if shared_root.is_dir()
+            if shared_root is not None
             else None,
         )
         if (
@@ -3468,6 +3495,10 @@ class EvalRunner:
         mounted_case = runtime_mount / "case"
         mounted_shared = runtime_mount / "_shared"
         mounted_tool_bin = runtime_mount / "tool-bin"
+        shared_environment_enabled = (
+            self._shared_snapshot is not None or self.suite.schema_version < 4
+        )
+        shared_mount_enabled = self._shared_snapshot is not None
         _copy_tree(workspace, runtime_workspace)
         _materialize_snapshot(case_snapshot, runtime_case)
         if self._shared_snapshot is not None:
@@ -3481,7 +3512,7 @@ class EvalRunner:
         for name, evidence in copied_executables.items():
             evidence["executed_path"] = str(mounted_tool_bin / name)
         case_root = case.prompt_file.parent
-        shared_root = self.suite.root / "cases" / "testing" / "_shared"
+        shared_root = _effective_shared_verifier_dir(self.suite)
         translated: list[str] = []
         for index, argument in enumerate(command):
             if index == 0:
@@ -3494,7 +3525,7 @@ class EvalRunner:
                 )
             elif (
                 argument_path.is_absolute()
-                and shared_root.is_dir()
+                and shared_root is not None
                 and argument_path.is_relative_to(shared_root)
             ):
                 translated.append(
@@ -3557,7 +3588,7 @@ class EvalRunner:
             f"BindReadOnlyPaths={runtime_tool_bin}:{mounted_tool_bin}",
         ]
         properties.extend(f"InaccessiblePaths={root}" for root in sensitive_roots)
-        if self._shared_snapshot is not None:
+        if shared_mount_enabled:
             properties.append(f"BindReadOnlyPaths={runtime_shared}:{mounted_shared}")
         sandbox_command = [
             self._systemd_run,
@@ -3595,7 +3626,11 @@ class EvalRunner:
                 "PYTHONPYCACHEPREFIX=/tmp/python-pycache",
                 f"EVAL_WORKSPACE={mounted_workspace}",
                 f"EVAL_CASE_ROOT={mounted_case}",
-                f"EVAL_SHARED_ROOT={mounted_shared}",
+                *(
+                    [f"EVAL_SHARED_ROOT={mounted_shared}"]
+                    if shared_environment_enabled
+                    else []
+                ),
                 f"EVAL_TOOL_BIN={mounted_tool_bin}",
                 f"EVAL_RESULT_ROOT={result_root}",
                 f"EVAL_HOST_UID={os.getuid()}",
@@ -4660,7 +4695,18 @@ def _one_sided_sign_test(wins: int, losses: int) -> float | None:
     return sum(math.comb(n, value) for value in range(wins, n + 1)) / (2**n)
 
 
-def _resolve_verifier_command(suite_root: Path, case: CaseSpec) -> tuple[str, ...]:
+def _resolve_verifier_command(
+    suite_root: Path, case: CaseSpec, shared_root: Path | None
+) -> tuple[str, ...]:
+    def assert_mounted(path: Path, kind: str) -> None:
+        if path.is_relative_to(case.prompt_file.parent) or (
+            shared_root is not None and path.is_relative_to(shared_root)
+        ):
+            return
+        raise RunnerError(
+            f"case {case.id} verifier {kind} is outside case and shared verifier roots"
+        )
+
     argv = list(case.verifier.argv)
     executable = Path(argv[0])
     if executable.parent != Path("."):
@@ -4675,6 +4721,7 @@ def _resolve_verifier_command(suite_root: Path, case: CaseSpec) -> tuple[str, ..
             raise RunnerError(
                 f"case {case.id} verifier executable is missing or not executable"
             )
+        assert_mounted(resolved, "executable")
         argv[0] = str(resolved)
     else:
         resolved_executable = shutil.which(argv[0])
@@ -4700,6 +4747,7 @@ def _resolve_verifier_command(suite_root: Path, case: CaseSpec) -> tuple[str, ..
                 raise RunnerError(
                     f"case {case.id} verifier script is missing: {script}"
                 )
+            assert_mounted(resolved_script, "script")
             argv[1] = str(resolved_script)
     return tuple(argv)
 
@@ -5114,7 +5162,7 @@ def _safe_repo_file(root: Path, path: PurePosixPath) -> Path:
 def _git_command(root: Path, arguments: list[str], *, timeout: int = 30) -> bytes:
     try:
         completed = subprocess.run(
-            ["git", "-C", str(root), *arguments],
+            ["git", "-C", str(root), "--literal-pathspecs", *arguments],
             capture_output=True,
             timeout=timeout,
             check=False,
@@ -5126,6 +5174,65 @@ def _git_command(root: Path, arguments: list[str], *, timeout: int = 30) -> byte
         detail = completed.stderr.decode("utf-8", errors="replace").strip()
         raise RunnerError(f"git {' '.join(arguments[:2])} failed: {detail}")
     return completed.stdout
+
+
+def _git_nul_records(
+    root: Path, arguments: list[str], *, timeout: int = 30
+) -> Iterator[bytes]:
+    command = ["git", "-C", str(root), "--literal-pathspecs", *arguments]
+    deadline = time.monotonic() + timeout
+    buffer = bytearray()
+    total = 0
+    with tempfile.TemporaryFile() as stderr:
+        try:
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=stderr,
+                shell=False,
+            )
+        except OSError as exc:
+            raise RunnerError(f"git command failed: {exc}") from exc
+        try:
+            if process.stdout is None:
+                raise RunnerError("git command did not expose stdout")
+            descriptor = process.stdout.fileno()
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(command, timeout)
+                ready, _, _ = select.select([descriptor], [], [], remaining)
+                if not ready:
+                    raise subprocess.TimeoutExpired(command, timeout)
+                chunk = os.read(descriptor, 64 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_GIT_TREE_METADATA_BYTES:
+                    raise RunnerError(
+                        f"git tree metadata exceeds {MAX_GIT_TREE_METADATA_BYTES} bytes"
+                    )
+                buffer.extend(chunk)
+                while (separator := buffer.find(b"\0")) >= 0:
+                    yield bytes(buffer[:separator])
+                    del buffer[: separator + 1]
+            if buffer:
+                raise RunnerError("git returned an unterminated tree entry")
+            remaining = max(0.0, deadline - time.monotonic())
+            returncode = process.wait(timeout=remaining)
+            if returncode != 0:
+                stderr.seek(0)
+                detail = stderr.read(8192).decode("utf-8", errors="replace").strip()
+                raise RunnerError(f"git {' '.join(arguments[:2])} failed: {detail}")
+            return
+        except subprocess.TimeoutExpired as exc:
+            raise RunnerError(f"git command failed: {exc}") from exc
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            if process.stdout is not None:
+                process.stdout.close()
 
 
 def _git_commit(root: Path) -> str:
@@ -5161,17 +5268,23 @@ def _git_dirty(root: Path, paths: tuple[PurePosixPath, ...] = ()) -> bool:
 
 def _source_paths(cases: tuple[CaseSpec, ...]) -> tuple[PurePosixPath, ...]:
     paths = {
-        path
-        for case in cases
-        for path in (PurePosixPath("skills") / case.skill, *case.context_files)
+        path for case in cases for path in (case.bundle_source, *case.context_files)
     }
     return tuple(sorted(paths, key=str))
 
 
-def _worktree_source_fingerprint(root: Path, case: CaseSpec) -> str:
+def _worktree_source_fingerprint(
+    root: Path, case: CaseSpec, *, ignore_empty_directories: bool = False
+) -> str:
     digest = hashlib.sha256()
-    skill_root = _safe_repo_file(root, PurePosixPath("skills") / case.skill)
-    digest.update(_tree_hash(skill_root, ignore_generated_caches=True).encode("ascii"))
+    bundle_root = _safe_repo_file(root, case.bundle_source)
+    digest.update(
+        _tree_hash(
+            bundle_root,
+            ignore_generated_caches=True,
+            ignore_empty_directories=ignore_empty_directories,
+        ).encode("ascii")
+    )
     for context_file in case.context_files:
         path = _safe_repo_file(root, context_file)
         if not path.is_file() or path.is_symlink():
@@ -5183,23 +5296,64 @@ def _worktree_source_fingerprint(root: Path, case: CaseSpec) -> str:
     return digest.hexdigest()
 
 
-def _git_source_fingerprint(root: Path, commit: str, case: CaseSpec) -> str:
-    prefix = PurePosixPath("skills") / case.skill
-    skill_states: dict[str, _FileState] = {}
-    for mode, raw_path in _git_skill_entries(root, commit, case.skill):
-        path = PurePosixPath(raw_path)
-        relative = path.relative_to(prefix).as_posix()
-        skill_states[relative] = _FileState(
-            _git_blob(root, commit, path), mode == "100755"
+def _git_source_fingerprint(
+    root: Path,
+    commit: str,
+    case: CaseSpec,
+    *,
+    ignore_generated_caches: bool = False,
+) -> str:
+    prefix = case.bundle_source
+    bundle_states: dict[str, _FileState] = {}
+    for entry in _git_bundle_entries(
+        root,
+        commit,
+        case.bundle_source,
+        ignore_generated_caches=ignore_generated_caches,
+    ):
+        relative = entry.path.relative_to(prefix).as_posix()
+        bundle_states[relative] = _FileState(
+            _git_blob(root, commit, entry.path), entry.mode == "100755"
         )
     digest = hashlib.sha256()
-    digest.update(_states_hash(skill_states).encode("ascii"))
+    digest.update(_states_hash(bundle_states).encode("ascii"))
     for context_file in case.context_files:
         digest.update(str(context_file).encode("utf-8"))
         digest.update(b"\0")
         digest.update(_git_blob(root, commit, context_file))
         digest.update(b"\0")
     return digest.hexdigest()
+
+
+def _effective_shared_verifier_dir(suite: SuiteSpec) -> Path | None:
+    configured = suite.shared_verifier_dir
+    if configured is None and suite.schema_version >= 4:
+        return None
+    logical = configured or (suite.root / "cases" / "testing" / "_shared")
+    if configured is None and not logical.exists() and not logical.is_symlink():
+        return None
+    try:
+        relative = logical.relative_to(suite.root)
+    except ValueError as exc:
+        raise RunnerError("shared verifier directory escapes suite root") from exc
+    current = suite.root
+    for part in relative.parts:
+        current /= part
+        if current.is_symlink():
+            raise RunnerError("shared verifier directory traverses a symlink")
+    try:
+        resolved = logical.resolve(strict=True)
+    except OSError as exc:
+        raise RunnerError(f"cannot resolve shared verifier directory: {exc}") from exc
+    if (
+        not resolved.is_relative_to(suite.root)
+        or not resolved.is_dir()
+        or resolved != logical
+    ):
+        raise RunnerError(
+            "shared verifier directory must remain contained and unchanged"
+        )
+    return resolved
 
 
 def _combined_case_hash(
@@ -5325,32 +5479,76 @@ def _assert_release_task_content_uniqueness(
         )
 
 
-def _git_skill_entries(root: Path, commit: str, skill: str) -> list[tuple[str, str]]:
-    prefix = f"skills/{skill}"
-    output = _git_command(
-        root, ["ls-tree", "-r", "-z", "--full-tree", commit, "--", prefix]
+@dataclass(frozen=True)
+class _GitBundleEntry:
+    mode: str
+    path: PurePosixPath
+    size: int
+
+
+def _is_generated_cache_path(path: PurePosixPath) -> bool:
+    return path.suffix in _GENERATED_CACHE_SUFFIXES or any(
+        part in _GENERATED_CACHE_DIRECTORIES for part in path.parts[:-1]
     )
-    entries: list[tuple[str, str]] = []
-    for raw_entry in output.split(b"\0"):
-        if not raw_entry:
-            continue
+
+
+def _git_bundle_entries(
+    root: Path,
+    commit: str,
+    bundle_source: PurePosixPath,
+    *,
+    ignore_generated_caches: bool = False,
+) -> list[_GitBundleEntry]:
+    prefix = bundle_source.as_posix()
+    entries: list[_GitBundleEntry] = []
+    directories: set[PurePosixPath] = set()
+    total = 0
+    for raw_entry in _git_nul_records(
+        root, ["ls-tree", "-r", "-z", "-l", "--full-tree", commit, "--", prefix]
+    ):
         try:
             metadata, raw_path = raw_entry.split(b"\t", 1)
-            mode, object_type, _object_id = metadata.decode("ascii").split(" ")
-            path = raw_path.decode("utf-8")
+            mode, object_type, _object_id, size_text = metadata.decode("ascii").split()
+            path = PurePosixPath(raw_path.decode("utf-8"))
+            size = int(size_text)
         except (ValueError, UnicodeDecodeError) as exc:
             raise RunnerError(f"invalid git tree entry for {prefix}") from exc
         if object_type != "blob" or mode not in {"100644", "100755"}:
             raise RunnerError(
-                f"skill snapshot contains unsupported git entry: {mode} {path}"
+                f"bundle snapshot contains unsupported git entry: {mode} {path}"
             )
-        pure = PurePosixPath(path)
-        if not pure.is_relative_to(PurePosixPath(prefix)) or ".." in pure.parts:
-            raise RunnerError(f"skill snapshot path escapes prefix: {path}")
-        entries.append((mode, path))
-    if not entries or f"{prefix}/SKILL.md" not in {path for _mode, path in entries}:
+        if not path.is_relative_to(bundle_source) or ".." in path.parts:
+            raise RunnerError(f"bundle snapshot path escapes prefix: {path}")
+        entry = _GitBundleEntry(mode=mode, path=path, size=size)
+        relative = path.relative_to(bundle_source)
+        if ignore_generated_caches and _is_generated_cache_path(relative):
+            continue
+        if len(relative.parent.parts) > MAX_TREE_DEPTH:
+            raise RunnerError(
+                f"bundle snapshot exceeds maximum depth {MAX_TREE_DEPTH}: {prefix}"
+            )
+        if entry.size > MAX_FILE_BYTES:
+            raise RunnerError(
+                f"bundle snapshot file exceeds {MAX_FILE_BYTES} bytes: {entry.path}"
+            )
+        total += entry.size
+        if total > MAX_TREE_BYTES:
+            raise RunnerError(
+                f"bundle snapshot exceeds {MAX_TREE_BYTES} bytes: {prefix}"
+            )
+        parent = relative.parent
+        while parent != PurePosixPath("."):
+            directories.add(parent)
+            parent = parent.parent
+        entries.append(entry)
+        if len(entries) + len(directories) > MAX_TREE_ENTRIES:
+            raise RunnerError(
+                f"bundle snapshot exceeds maximum entries {MAX_TREE_ENTRIES}: {prefix}"
+            )
+    entrypoint = bundle_source / "SKILL.md"
+    if not entries or entrypoint not in {entry.path for entry in entries}:
         raise RunnerError(
-            f"commit {commit} has no complete skill directory at {prefix}"
+            f"commit {commit} has no complete bundle directory at {prefix}"
         )
     return entries
 
@@ -5361,22 +5559,33 @@ def _git_blob(root: Path, commit: str, path: PurePosixPath) -> bytes:
     )
 
 
-def _materialize_git_skill(root: Path, commit: str, skill: str, target: Path) -> None:
-    entries = _git_skill_entries(root, commit, skill)
-    prefix = PurePosixPath("skills") / skill
+def _materialize_git_bundle(
+    root: Path,
+    commit: str,
+    bundle_source: PurePosixPath,
+    target: Path,
+    *,
+    ignore_generated_caches: bool = False,
+) -> None:
+    entries = _git_bundle_entries(
+        root,
+        commit,
+        bundle_source,
+        ignore_generated_caches=ignore_generated_caches,
+    )
+    prefix = bundle_source
     target.mkdir(parents=True, exist_ok=False)
-    for mode, repository_path in entries:
-        pure_path = PurePosixPath(repository_path)
-        relative = pure_path.relative_to(prefix)
+    for entry in entries:
+        relative = entry.path.relative_to(prefix)
         destination = target / Path(*relative.parts)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        content = _git_blob(root, commit, pure_path)
-        if len(content) > MAX_FILE_BYTES:
+        content = _git_blob(root, commit, entry.path)
+        if len(content) != entry.size:
             raise RunnerError(
-                f"skill snapshot file exceeds size limit: {repository_path}"
+                f"bundle snapshot size changed while reading {entry.path}"
             )
         destination.write_bytes(content)
-        destination.chmod(0o755 if mode == "100755" else 0o644)
+        destination.chmod(0o755 if entry.mode == "100755" else 0o644)
     _scan_tree(target)
 
 
@@ -5396,9 +5605,89 @@ class _FileState:
     executable: bool
 
 
-def _scan_tree(root: Path, *, ignore_generated_caches: bool = False) -> list[Path]:
+def _scan_normalized_worktree(
+    root: Path, *, ignore_generated_caches: bool
+) -> list[Path]:
+    files: list[Path] = []
+    total = 0
+    traversed_entries = 0
+    stack: list[tuple[Path, int]] = [(root, 0)]
+    while stack:
+        current, depth = stack.pop()
+        try:
+            with os.scandir(current) as scanner:
+                for item in scanner:
+                    traversed_entries += 1
+                    if traversed_entries > MAX_WORKTREE_SCAN_ENTRIES:
+                        raise RunnerError(
+                            "worktree traversal exceeds maximum entries "
+                            f"{MAX_WORKTREE_SCAN_ENTRIES}: {root}"
+                        )
+                    path = Path(item.path)
+                    if item.is_symlink():
+                        raise RunnerError(
+                            f"tree contains symlink or special entry: {path}"
+                        )
+                    if item.is_dir(follow_symlinks=False):
+                        if (
+                            ignore_generated_caches
+                            and item.name in _GENERATED_CACHE_DIRECTORIES
+                        ):
+                            continue
+                        child_depth = depth + 1
+                        if child_depth > MAX_WORKTREE_SCAN_DEPTH:
+                            raise RunnerError(
+                                "worktree traversal exceeds maximum depth "
+                                f"{MAX_WORKTREE_SCAN_DEPTH}: {root}"
+                            )
+                        stack.append((path, child_depth))
+                        continue
+                    if not item.is_file(follow_symlinks=False):
+                        raise RunnerError(f"tree contains special file: {path}")
+                    if (
+                        ignore_generated_caches
+                        and path.suffix in _GENERATED_CACHE_SUFFIXES
+                    ):
+                        continue
+                    size = item.stat(follow_symlinks=False).st_size
+                    if size > MAX_FILE_BYTES:
+                        raise RunnerError(
+                            f"tree file exceeds {MAX_FILE_BYTES} bytes: {path}"
+                        )
+                    total += size
+                    if total > MAX_TREE_BYTES:
+                        raise RunnerError(
+                            f"tree exceeds {MAX_TREE_BYTES} bytes: {root}"
+                        )
+                    files.append(path)
+        except OSError as exc:
+            raise RunnerError(f"cannot scan tree directory {current}: {exc}") from exc
+
+    retained_directories = {
+        parent
+        for path in files
+        for parent in path.relative_to(root).parents
+        if parent != Path(".")
+    }
+    if any(len(path.parts) > MAX_TREE_DEPTH for path in retained_directories):
+        raise RunnerError(f"tree exceeds maximum depth {MAX_TREE_DEPTH}: {root}")
+    if len(files) + len(retained_directories) > MAX_TREE_ENTRIES:
+        raise RunnerError(f"tree exceeds maximum entries {MAX_TREE_ENTRIES}: {root}")
+    return sorted(files, key=lambda path: path.relative_to(root).as_posix())
+
+
+def _scan_tree(
+    root: Path,
+    *,
+    ignore_generated_caches: bool = False,
+    ignore_empty_directories: bool = False,
+) -> list[Path]:
     if not root.is_dir() or root.is_symlink():
         raise RunnerError(f"tree root must be a regular directory: {root}")
+    if ignore_empty_directories:
+        return _scan_normalized_worktree(
+            root, ignore_generated_caches=ignore_generated_caches
+        )
     files: list[Path] = []
     total = 0
     entries = 0
@@ -5444,10 +5733,17 @@ def _scan_tree(root: Path, *, ignore_generated_caches: bool = False) -> list[Pat
 
 
 def _read_tree(
-    root: Path, *, ignore_generated_caches: bool = False
+    root: Path,
+    *,
+    ignore_generated_caches: bool = False,
+    ignore_empty_directories: bool = False,
 ) -> dict[str, _FileState]:
     states: dict[str, _FileState] = {}
-    for path in _scan_tree(root, ignore_generated_caches=ignore_generated_caches):
+    for path in _scan_tree(
+        root,
+        ignore_generated_caches=ignore_generated_caches,
+        ignore_empty_directories=ignore_empty_directories,
+    ):
         relative = path.relative_to(root).as_posix()
         mode = path.stat().st_mode
         states[relative] = _FileState(path.read_bytes(), bool(mode & stat.S_IXUSR))
@@ -5455,9 +5751,17 @@ def _read_tree(
 
 
 def _copy_tree(
-    source: Path, destination: Path, *, ignore_generated_caches: bool = False
+    source: Path,
+    destination: Path,
+    *,
+    ignore_generated_caches: bool = False,
+    ignore_empty_directories: bool = False,
 ) -> None:
-    files = _scan_tree(source, ignore_generated_caches=ignore_generated_caches)
+    files = _scan_tree(
+        source,
+        ignore_generated_caches=ignore_generated_caches,
+        ignore_empty_directories=ignore_empty_directories,
+    )
     destination.mkdir(parents=True, exist_ok=False)
     directories = sorted(
         {
@@ -5489,9 +5793,18 @@ def _states_hash(states: dict[str, _FileState]) -> str:
     return digest.hexdigest()
 
 
-def _tree_hash(root: Path, *, ignore_generated_caches: bool = False) -> str:
+def _tree_hash(
+    root: Path,
+    *,
+    ignore_generated_caches: bool = False,
+    ignore_empty_directories: bool = False,
+) -> str:
     return _states_hash(
-        _read_tree(root, ignore_generated_caches=ignore_generated_caches)
+        _read_tree(
+            root,
+            ignore_generated_caches=ignore_generated_caches,
+            ignore_empty_directories=ignore_empty_directories,
+        )
     )
 
 

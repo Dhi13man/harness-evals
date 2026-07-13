@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import stat
 import subprocess
 import tarfile
 import tempfile
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 
@@ -20,6 +23,33 @@ PROFILE_LAYOUTS = {
     },
     "harness_evals/plain_language_calibration/profile.json": set(),
 }
+
+
+@dataclass(frozen=True)
+class ExternalSuite:
+    manifest: Path
+    bundle_commit: str
+    bundle_source_sha256: str
+    shared_tree_sha256: str
+    verifier: Path
+
+
+def _tree_sha256(root: Path) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(
+        (path for path in root.rglob("*") if path.is_file()),
+        key=lambda path: path.relative_to(root).as_posix(),
+    ):
+        relative = path.relative_to(root).as_posix()
+        content = path.read_bytes()
+        executable = bool(path.stat().st_mode & stat.S_IXUSR)
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0x\0" if executable else b"\0-\0")
+        digest.update(str(len(content)).encode("ascii"))
+        digest.update(b"\0")
+        digest.update(content)
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def _run(*argv: str, cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -135,7 +165,7 @@ def _inspect_distributions(wheel: Path, sdist: Path) -> None:
             )
 
 
-def _write_external_suite(root: Path) -> Path:
+def _write_external_suite(root: Path) -> ExternalSuite:
     from harness_evals.comparator_profiles import (
         BUILTIN_SOFTWARE_PROFILE_ID,
         resolve_builtin_profile,
@@ -144,9 +174,14 @@ def _write_external_suite(root: Path) -> Path:
     _run("git", "init", "-q", cwd=root)
     _run("git", "config", "user.email", "package-smoke@example.invalid", cwd=root)
     _run("git", "config", "user.name", "Package Smoke", cwd=root)
-    (root / "README.txt").write_text("external suite\n", encoding="utf-8")
-    _run("git", "add", "README.txt", cwd=root)
-    _run("git", "commit", "-q", "-m", "test fixture", cwd=root)
+    bundle = root / "instruction-bundles" / "demo"
+    bundle.mkdir(parents=True)
+    (bundle / "SKILL.md").write_text(
+        "# Installed package smoke bundle\n", encoding="utf-8"
+    )
+    _run("git", "add", "instruction-bundles", cwd=root)
+    _run("git", "commit", "-q", "-m", "configured bundle", cwd=root)
+    bundle_commit = _run("git", "rev-parse", "HEAD", cwd=root).stdout.strip()
 
     profile = resolve_builtin_profile(BUILTIN_SOFTWARE_PROFILE_ID)
     test_release = json.loads(profile.read_bytes("test_release"))
@@ -159,18 +194,23 @@ def _write_external_suite(root: Path) -> Path:
         json.dumps(authority, indent=2) + "\n",
         encoding="utf-8",
     )
-    (root / "prompt.md").write_text("Create answer.txt.\n", encoding="utf-8")
-    fixture = root / "fixture"
+    case_root = root / "cases" / "basic"
+    case_root.mkdir(parents=True)
+    (case_root / "prompt.md").write_text("Create answer.txt.\n", encoding="utf-8")
+    fixture = case_root / "fixture"
     fixture.mkdir()
     (fixture / "input.txt").write_text("input\n", encoding="utf-8")
-    (root / "verifier.py").write_text(
+    shared = root / "oracle-resources" / "common"
+    shared.mkdir(parents=True)
+    (shared / "helper.txt").write_text("shared oracle\n", encoding="utf-8")
+    (shared / "verifier.py").write_text(
         "import json\nprint(json.dumps({'passed': True, 'assertions': "
         "[{'id': 'answer-present', 'passed': True, 'evidence': 'smoke'}], "
         "'metrics': {}}))\n",
         encoding="utf-8",
     )
     suite = {
-        "schema_version": 3,
+        "schema_version": 4,
         "suite_id": "installed-package-smoke",
         "seed": 7123,
         "evaluation_mode": "judged",
@@ -190,16 +230,22 @@ def _write_external_suite(root: Path) -> Path:
             "kind": "builtin",
             "id": BUILTIN_SOFTWARE_PROFILE_ID,
         },
+        "shared_verifier_dir": "oracle-resources/common",
         "variants": [
-            {"id": "without-a", "kind": "without_skill"},
-            {"id": "without-b", "kind": "without_skill"},
+            {"id": "without", "kind": "without_skill"},
+            {
+                "id": "current",
+                "kind": "worktree",
+                "root": ".",
+                "source_ref": bundle_commit,
+            },
             {"id": "original", "kind": "git_ref", "git_ref": frozen_original},
         ],
         "comparisons": [
             {
                 "id": "package-smoke",
-                "control": "without-a",
-                "treatment": "without-b",
+                "control": "without",
+                "treatment": "current",
                 "repetitions": 3,
                 "comparator_order": "ab_ba",
             }
@@ -208,11 +254,12 @@ def _write_external_suite(root: Path) -> Path:
             {
                 "id": "basic",
                 "skill": "demo",
+                "bundle_source": "instruction-bundles/demo",
                 "split": "train",
-                "prompt_file": "prompt.md",
-                "fixture_dir": "fixture",
+                "prompt_file": "cases/basic/prompt.md",
+                "fixture_dir": "cases/basic/fixture",
                 "verifier": {
-                    "argv": ["python3", "verifier.py"],
+                    "argv": ["python3", "oracle-resources/common/verifier.py"],
                     "timeout_seconds": 5,
                     "required_tools": [],
                 },
@@ -235,7 +282,16 @@ def _write_external_suite(root: Path) -> Path:
     }
     manifest = root / "external-suite.json"
     manifest.write_text(json.dumps(suite, indent=2) + "\n", encoding="utf-8")
-    return manifest
+    bundle_tree_sha256 = _tree_sha256(bundle)
+    return ExternalSuite(
+        manifest=manifest,
+        bundle_commit=bundle_commit,
+        bundle_source_sha256=hashlib.sha256(
+            bundle_tree_sha256.encode("ascii")
+        ).hexdigest(),
+        shared_tree_sha256=_tree_sha256(shared),
+        verifier=(shared / "verifier.py").resolve(),
+    )
 
 
 def _run_external_smoke(cli: Path, forbidden_root: Path) -> None:
@@ -276,11 +332,11 @@ def _run_external_smoke(cli: Path, forbidden_root: Path) -> None:
         raise RuntimeError("installed test-authority profile loaded for production")
     with tempfile.TemporaryDirectory(prefix="harness-evals-installed-") as temporary:
         root = Path(temporary).resolve()
-        manifest = _write_external_suite(root)
+        external = _write_external_suite(root)
         completed = _run(
             str(cli),
             "--suite",
-            str(manifest),
+            str(external.manifest),
             "--comparison",
             "package-smoke",
             "--dry-run",
@@ -296,6 +352,25 @@ def _run_external_smoke(cli: Path, forbidden_root: Path) -> None:
             raise RuntimeError("installed CLI did not validate profile locks")
         if comparator["protocol_locks_valid"] is not True:
             raise RuntimeError("installed CLI did not validate protocol locks")
+        current = summary["preflight"]["sources"]["current"]
+        if current["kind"] != "worktree":
+            raise RuntimeError("installed CLI did not preflight the external worktree")
+        if current["expected_source_commit"] != external.bundle_commit:
+            raise RuntimeError("installed CLI resolved the wrong bundle source commit")
+        if current["worktree_head_commit"] != external.bundle_commit:
+            raise RuntimeError("installed CLI observed the wrong worktree commit")
+        if current["source_dirty"] is not False:
+            raise RuntimeError("installed CLI reported the configured bundle as dirty")
+        if (
+            current["expected_source_sha256_by_case"]["basic"]
+            != external.bundle_source_sha256
+        ):
+            raise RuntimeError("installed CLI hashed the wrong configured bundle bytes")
+        case = summary["preflight"]["cases"][0]
+        if case["shared_tree_sha256"] != external.shared_tree_sha256:
+            raise RuntimeError("installed CLI hashed the wrong shared snapshot bytes")
+        if Path(case["verifier_argv"][1]).resolve() != external.verifier:
+            raise RuntimeError("installed CLI did not resolve the external verifier")
 
 
 def main() -> int:

@@ -80,6 +80,7 @@ class VerifierSpec:
 class CaseSpec:
     id: str
     skill: str
+    bundle_source: PurePosixPath
     split: str
     prompt_file: Path
     fixture_dir: Path
@@ -113,6 +114,7 @@ class SuiteSpec:
     variants: tuple[VariantSpec, ...]
     comparisons: tuple[ComparisonSpec, ...]
     cases: tuple[CaseSpec, ...]
+    shared_verifier_dir: Path | None
     manifest_hash: str
     raw_bytes: bytes
     raw: dict[str, Any]
@@ -323,6 +325,85 @@ def _suite_profile_directory(root: Path, value: Any, location: str) -> Path:
     return resolved
 
 
+def _shared_verifier_directory(
+    root: Path, value: Any, location: str = "shared_verifier_dir"
+) -> Path | None:
+    if value is None:
+        return None
+    raw = _string(value, location)
+    try:
+        raw.encode("utf-8", errors="strict")
+    except UnicodeEncodeError as exc:
+        raise ManifestError(f"{location} must be valid UTF-8 text") from exc
+    path = PurePosixPath(raw)
+    if (
+        path.is_absolute()
+        or path == PurePosixPath(".")
+        or ".." in path.parts
+        or path.as_posix() != raw
+        or raw.startswith("./")
+        or "//" in raw
+        or raw.endswith("/")
+        or "\\" in raw
+        or any(ord(character) < 32 for character in raw)
+    ):
+        raise ManifestError(f"{location} must be a canonical suite-relative path")
+    logical = root
+    try:
+        for part in path.parts:
+            logical = logical / part
+            if logical.is_symlink():
+                raise ManifestError(f"{location} must not traverse a symlink")
+        resolved = logical.resolve(strict=True)
+    except OSError as exc:
+        raise ManifestError(f"cannot resolve {location}: {exc}") from exc
+    if not resolved.is_relative_to(root) or not resolved.is_dir():
+        raise ManifestError(f"{location} must name a contained directory")
+    return resolved
+
+
+def _legacy_shared_verifier_directory(root: Path) -> Path | None:
+    legacy = root / "cases" / "testing" / "_shared"
+    if not legacy.exists() and not legacy.is_symlink():
+        return None
+    return _shared_verifier_directory(
+        root, "cases/testing/_shared", "legacy shared verifier directory"
+    )
+
+
+def _assert_shared_verifier_separation(
+    shared_verifier_dir: Path | None,
+    repository_root: Path,
+    variants: tuple[VariantSpec, ...],
+    cases: tuple[CaseSpec, ...],
+) -> None:
+    if shared_verifier_dir is None:
+        return
+    for case in cases:
+        protected_paths = {case.prompt_file.parent, case.fixture_dir}
+        source_roots = {repository_root} | {
+            variant.root
+            for variant in variants
+            if variant.kind == "worktree" and variant.root is not None
+        }
+        for source_root in source_roots:
+            protected_paths.add(
+                (source_root / Path(*case.bundle_source.parts)).resolve()
+            )
+            protected_paths.update(
+                (source_root / Path(*context_file.parts)).resolve()
+                for context_file in case.context_files
+            )
+        if any(
+            shared_verifier_dir.is_relative_to(protected_path)
+            or protected_path.is_relative_to(shared_verifier_dir)
+            for protected_path in protected_paths
+        ):
+            raise ManifestError(
+                f"shared_verifier_dir overlaps case {case.id} or evaluated source"
+            )
+
+
 def _parse_comparator_profile(raw: Any, suite_root: Path) -> ComparatorProfileSpec:
     data = _object(
         raw,
@@ -393,6 +474,25 @@ def _repository_path(value: Any, location: str) -> PurePosixPath:
         raise ManifestError(
             f"{location} must be a repository-relative path without parent traversal"
         )
+    return path
+
+
+def _bundle_source_path(value: Any, location: str) -> PurePosixPath:
+    raw = _string(value, location)
+    try:
+        raw.encode("utf-8", errors="strict")
+    except UnicodeEncodeError as exc:
+        raise ManifestError(f"{location} must be valid UTF-8 text") from exc
+    path = _repository_path(raw, location)
+    if (
+        path.as_posix() != raw
+        or raw.startswith("./")
+        or "//" in raw
+        or raw.endswith("/")
+        or "\\" in raw
+        or any(ord(character) < 32 for character in raw)
+    ):
+        raise ManifestError(f"{location} must be a canonical repository-relative path")
     return path
 
 
@@ -608,6 +708,7 @@ def _parse_cases(
     suite_root: Path,
     *,
     require_comparator_contract: bool,
+    require_bundle_source: bool,
     comparator_contract_vocabulary: dict[str, frozenset[str]] | None,
 ) -> tuple[CaseSpec, ...]:
     items = _list(raw, "cases", minimum=1)
@@ -615,6 +716,7 @@ def _parse_cases(
     case_fields = {
         "id",
         "skill",
+        "bundle_source",
         "split",
         "prompt_file",
         "fixture_dir",
@@ -624,11 +726,11 @@ def _parse_cases(
         "critical_expectations",
         "comparator_contract",
     }
-    required_case_fields = (
-        case_fields
-        if require_comparator_contract
-        else case_fields - {"comparator_contract"}
-    )
+    required_case_fields = case_fields - {"comparator_contract", "bundle_source"}
+    if require_comparator_contract:
+        required_case_fields.add("comparator_contract")
+    if require_bundle_source:
+        required_case_fields.add("bundle_source")
     allowed_case_fields = required_case_fields
     verifier_fields = {"argv", "timeout_seconds", "required_tools"}
     for index, item in enumerate(items):
@@ -695,10 +797,18 @@ def _parse_cases(
         )
         if len(set(critical)) != len(critical):
             raise ManifestError(f"{location}.critical_expectations contains duplicates")
+        skill = _string(data["skill"], f"{location}.skill", pattern=SKILL_RE)
         cases.append(
             CaseSpec(
                 id=_string(data["id"], f"{location}.id", pattern=IDENTIFIER_RE),
-                skill=_string(data["skill"], f"{location}.skill", pattern=SKILL_RE),
+                skill=skill,
+                bundle_source=(
+                    _bundle_source_path(
+                        data["bundle_source"], f"{location}.bundle_source"
+                    )
+                    if require_bundle_source
+                    else PurePosixPath("skills") / skill
+                ),
                 split=split,
                 prompt_file=_suite_path(
                     suite_root,
@@ -910,7 +1020,7 @@ def load_suite(path: str | Path) -> SuiteSpec:
     if not isinstance(data, dict):
         raise ManifestError("suite must be an object")
     schema_version = _integer(
-        data.get("schema_version"), "schema_version", minimum=2, maximum=3
+        data.get("schema_version"), "schema_version", minimum=2, maximum=4
     )
     common_fields = {
         "$schema",
@@ -944,6 +1054,8 @@ def load_suite(path: str | Path) -> SuiteSpec:
             "comparator",
             "comparator_profile",
         }
+        if schema_version >= 4:
+            root_fields.add("shared_verifier_dir")
         if not isinstance(data.get("evaluation_mode"), str):
             raise ManifestError("evaluation_mode must be a string")
         evaluation_mode = data["evaluation_mode"]
@@ -958,6 +1070,9 @@ def load_suite(path: str | Path) -> SuiteSpec:
             root_fields = required
         else:
             raise ManifestError("evaluation_mode must be 'judged' or 'objective_only'")
+        if schema_version >= 4:
+            required.add("shared_verifier_dir")
+            root_fields.add("shared_verifier_dir")
         root = _object(
             data,
             "suite",
@@ -987,10 +1102,20 @@ def load_suite(path: str | Path) -> SuiteSpec:
         root["cases"],
         suite_root,
         require_comparator_contract=evaluation_mode == "judged",
+        require_bundle_source=schema_version >= 4,
         comparator_contract_vocabulary=_comparator_contract_vocabulary(
             comparator_profile
         ),
     )
+    shared_verifier_dir = (
+        _shared_verifier_directory(suite_root, root["shared_verifier_dir"])
+        if schema_version >= 4
+        else _legacy_shared_verifier_directory(suite_root)
+    )
+    if schema_version >= 4:
+        _assert_shared_verifier_separation(
+            shared_verifier_dir, repository_root, variants, cases
+        )
     return SuiteSpec(
         path=manifest_path,
         root=suite_root,
@@ -1005,6 +1130,7 @@ def load_suite(path: str | Path) -> SuiteSpec:
         variants=variants,
         comparisons=comparisons,
         cases=cases,
+        shared_verifier_dir=shared_verifier_dir,
         manifest_hash=hashlib.sha256(raw_bytes).hexdigest(),
         raw_bytes=raw_bytes,
         raw=root,

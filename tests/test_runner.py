@@ -536,6 +536,39 @@ class SuiteFixture:
             case.pop("comparator_contract", None)
         self.save_manifest()
 
+    def use_v4_judged(self, bundle_source: str = "skills/demo") -> None:
+        self.use_v3_judged()
+        self.manifest["schema_version"] = 4
+        self.manifest["shared_verifier_dir"] = None
+        for case in self.manifest["cases"]:
+            case["bundle_source"] = bundle_source
+        self.save_manifest()
+
+    def use_v4_objective(self, bundle_source: str = "skills/demo") -> None:
+        self.use_v3_objective()
+        self.manifest["schema_version"] = 4
+        self.manifest["shared_verifier_dir"] = None
+        for case in self.manifest["cases"]:
+            case["bundle_source"] = bundle_source
+        self.save_manifest()
+
+    def isolate_basic_case(self) -> None:
+        case_root = "cases/basic"
+        self._write_suite(f"{case_root}/prompt.md", "Fix and verify the result.\n")
+        self._write_suite(f"{case_root}/fixture/input.txt", "original\n")
+        self._write_suite(
+            f"{case_root}/oracle/verifier.py",
+            (self.suite_root / "verifier.py").read_text(encoding="utf-8"),
+        )
+        case = self.manifest["cases"][0]
+        case["prompt_file"] = f"{case_root}/prompt.md"
+        case["fixture_dir"] = f"{case_root}/fixture"
+        case["verifier"]["argv"] = [
+            "python3",
+            f"{case_root}/oracle/verifier.py",
+        ]
+        self.save_manifest()
+
     def create_data_profile(
         self,
         relative: str,
@@ -671,10 +704,10 @@ class SuiteFixture:
             ).read_text(encoding="utf-8")
         )
         case_bindings = []
-        shared_root = self.suite_root / "cases" / "testing" / "_shared"
+        shared_root = suite.shared_verifier_dir
         shared_snapshot = (
             _snapshot_tree(shared_root, ignore_generated_caches=True)
-            if shared_root.is_dir()
+            if shared_root is not None
             else None
         )
         for case in suite.cases:
@@ -1305,6 +1338,43 @@ class RunnerIntegrationTests(unittest.TestCase):
     def runner(self, provider: FakeProvider | None = None) -> EvalRunner:
         selected = provider or self.fixture.provider()
         return EvalRunner(self.load(), selected, selected)
+
+    def assert_configured_bundle_rejected_for_git_and_worktree(
+        self, git_message_pattern: str, worktree_message_pattern: str
+    ) -> None:
+        suite = self.load()
+        without = next(variant for variant in suite.variants if variant.id == "without")
+        source_variants = {
+            variant.id: variant
+            for variant in suite.variants
+            if variant.id in {"old", "current"}
+        }
+        base_comparison = suite.comparisons[0]
+        for variant_id in ("old", "current"):
+            comparison_id = f"without-{variant_id}"
+            comparison = replace(
+                base_comparison,
+                id=comparison_id,
+                control="without",
+                treatment=variant_id,
+            )
+            selected_suite = replace(
+                suite,
+                variants=(without, source_variants[variant_id]),
+                comparisons=(comparison,),
+            )
+            provider = self.fixture.provider()
+            with self.subTest(variant_id=variant_id):
+                expected = (
+                    git_message_pattern
+                    if variant_id == "old"
+                    else worktree_message_pattern
+                )
+                with self.assertRaisesRegex(RunnerError, expected):
+                    EvalRunner(selected_suite, provider).preflight(
+                        RunSelection(comparison_ids=(comparison_id,))
+                    )
+                self.assertEqual(provider.agent_requests, [])
 
     def test_provider_factory_lazily_builds_codex_app_server(self) -> None:
         config = replace(self.load().provider, kind="codex")
@@ -2069,6 +2139,185 @@ print(json.dumps({"passed": False, "assertions": [{"id": "answer-present", "pass
             pair["arms"]["treatment"]["source"]["skill_snapshot_sha256"],
         )
 
+    def test_configured_bundle_source_has_git_and_worktree_parity(self) -> None:
+        self.fixture._write(
+            "instruction-bundles/demo/SKILL.md",
+            "# Configured Bundle\n\nConfigured guidance.\n",
+        )
+        self.fixture._write(
+            "instruction-bundles/demo/references/rule.md",
+            "# Configured Rule\n\nConfigured route.\n",
+        )
+        self.fixture._git("add", "instruction-bundles")
+        self.fixture._git("commit", "-q", "-m", "configured bundle")
+        bundle_commit = self.fixture._git("rev-parse", "HEAD").strip()
+        self.fixture.manifest["variants"][1]["git_ref"] = bundle_commit
+        self.fixture.manifest["variants"][2]["source_ref"] = bundle_commit
+        self.fixture.use_v4_objective("instruction-bundles/demo")
+
+        observations: dict[str, tuple[str, str]] = {}
+
+        def agent(request):
+            observations[request.variant_id] = (
+                (request.skill_snapshot / "SKILL.md").read_text(encoding="utf-8"),
+                (request.skill_snapshot / "references/rule.md").read_text(
+                    encoding="utf-8"
+                ),
+            )
+            (request.workspace / "answer.txt").write_text(
+                "configured result", encoding="utf-8"
+            )
+            return "configured result"
+
+        provider = self.fixture.provider()
+        provider._agent_handler = agent
+        result = EvalRunner(self.load(), provider).run(
+            RunSelection(comparison_ids=("old-current",)),
+            output_dir=self.output("configured-bundle"),
+        )
+
+        self.assertEqual(observations["old"], observations["current"])
+        self.assertIn("Configured guidance", observations["old"][0])
+        self.assertIn("Configured route", observations["old"][1])
+        pair = result["pairs"][0]
+        self.assertTrue(
+            all(arm["error"] is None for arm in pair["arms"].values()), result
+        )
+        self.assertTrue(
+            all(arm["verifier"]["passed"] for arm in pair["arms"].values()), result
+        )
+        self.assertEqual(
+            pair["arms"]["control"]["source"]["skill_snapshot_sha256"],
+            pair["arms"]["treatment"]["source"]["skill_snapshot_sha256"],
+        )
+
+    def test_literal_git_pathspec_bundle_has_parity_and_dirty_detection(self) -> None:
+        bundle_source = ":(literal)demo"
+        self.fixture._write(f"{bundle_source}/SKILL.md", "# Literal Pathspec Bundle\n")
+        self.fixture._git("--literal-pathspecs", "add", "--", bundle_source)
+        self.fixture._git("commit", "-q", "-m", "literal pathspec bundle")
+        bundle_commit = self.fixture._git("rev-parse", "HEAD").strip()
+        self.fixture.manifest["variants"][1]["git_ref"] = bundle_commit
+        self.fixture.manifest["variants"][2]["source_ref"] = bundle_commit
+        self.fixture.use_v4_objective(bundle_source)
+
+        observed: dict[str, str] = {}
+
+        def agent(request):
+            observed[request.variant_id] = (
+                request.skill_snapshot / "SKILL.md"
+            ).read_text(encoding="utf-8")
+            (request.workspace / "answer.txt").write_text(
+                "literal path result", encoding="utf-8"
+            )
+            return "literal path result"
+
+        provider = self.fixture.provider()
+        provider._agent_handler = agent
+        result = EvalRunner(self.load(), provider).run(
+            RunSelection(comparison_ids=("old-current",)),
+            output_dir=self.output("literal-pathspec-bundle"),
+        )
+        pair = result["pairs"][0]
+        self.assertEqual(observed["old"], observed["current"])
+        self.assertEqual(
+            pair["arms"]["control"]["source"]["skill_snapshot_sha256"],
+            pair["arms"]["treatment"]["source"]["skill_snapshot_sha256"],
+        )
+
+        self.fixture._write(
+            f"{bundle_source}/SKILL.md",
+            "# Literal Pathspec Bundle\n\nUncommitted.\n",
+        )
+        with self.assertRaisesRegex(RunnerError, "commit it before A/B evaluation"):
+            EvalRunner(self.load(), self.fixture.provider()).preflight(
+                RunSelection(comparison_ids=("without-current",))
+            )
+
+    def test_tracked_generated_caches_have_git_and_worktree_parity(self) -> None:
+        self.fixture._write(
+            "instruction-bundles/demo/SKILL.md", "# Cache-Aware Bundle\n"
+        )
+        cache = self.fixture.repository / "instruction-bundles/demo/__pycache__"
+        cache.mkdir(parents=True)
+        cache.joinpath("compiled.pyc").write_bytes(b"tracked cache")
+        self.fixture._write(
+            "instruction-bundles/demo/scripts/generated.pyo", "tracked cache\n"
+        )
+        self.fixture._git("add", "instruction-bundles")
+        self.fixture._git("commit", "-q", "-m", "bundle with tracked caches")
+        bundle_commit = self.fixture._git("rev-parse", "HEAD").strip()
+        self.fixture.manifest["variants"][1]["git_ref"] = bundle_commit
+        self.fixture.manifest["variants"][2]["source_ref"] = bundle_commit
+        self.fixture.use_v4_objective("instruction-bundles/demo")
+        observed: dict[str, list[str]] = {}
+
+        def agent(request):
+            observed[request.variant_id] = [
+                path.relative_to(request.skill_snapshot).as_posix()
+                for path in request.skill_snapshot.rglob("*")
+            ]
+            (request.workspace / "answer.txt").write_text(
+                "cache-free result", encoding="utf-8"
+            )
+            return "cache-free result"
+
+        provider = self.fixture.provider()
+        provider._agent_handler = agent
+        result = EvalRunner(self.load(), provider).run(
+            RunSelection(comparison_ids=("old-current",)),
+            output_dir=self.output("tracked-cache-bundle"),
+        )
+
+        pair = result["pairs"][0]
+        self.assertEqual(
+            pair["arms"]["control"]["source"]["skill_snapshot_sha256"],
+            pair["arms"]["treatment"]["source"]["skill_snapshot_sha256"],
+        )
+        self.assertEqual(observed["old"], observed["current"])
+        self.assertTrue(
+            all(
+                "__pycache__" not in path and not path.endswith((".pyc", ".pyo"))
+                for paths in observed.values()
+                for path in paths
+            )
+        )
+
+    def test_legacy_git_ref_preserves_tracked_cache_snapshot_bytes(self) -> None:
+        cache = self.fixture.repository / "skills/demo/__pycache__"
+        cache.mkdir(parents=True)
+        cache.joinpath("legacy.pyc").write_bytes(b"legacy tracked cache")
+        self.fixture._git("add", "skills/demo/__pycache__/legacy.pyc")
+        self.fixture._git("commit", "-q", "-m", "legacy tracked cache")
+        cache_commit = self.fixture._git("rev-parse", "HEAD").strip()
+
+        version_two = self.load()
+        version_two_fingerprint = runner_module._git_source_fingerprint(
+            self.fixture.repository, cache_commit, version_two.cases[0]
+        )
+        snapshot = self.output("legacy-cache-snapshot")
+        runner_module._materialize_git_bundle(
+            self.fixture.repository,
+            cache_commit,
+            version_two.cases[0].bundle_source,
+            snapshot,
+        )
+        self.assertEqual(
+            (snapshot / "__pycache__/legacy.pyc").read_bytes(),
+            b"legacy tracked cache",
+        )
+
+        self.fixture.use_v3_judged()
+        version_three = self.load()
+        version_three_fingerprint = runner_module._git_source_fingerprint(
+            self.fixture.repository, cache_commit, version_three.cases[0]
+        )
+        self.assertEqual(version_three_fingerprint, version_two_fingerprint)
+        self.assertEqual(
+            version_two_fingerprint,
+            "bb56f030d871f9cb5af42d1fae523140be90136caba30c335736f9401852e72c",
+        )
+
     def test_ab_ba_detects_position_bias_and_seed_reproduces_mapping(self) -> None:
         provider_one = self.fixture.provider(comparator_always_a=True)
         first = self.runner(provider_one).run(
@@ -2471,6 +2720,328 @@ print(json.dumps({"passed": True, "assertions": [
         for arm in result["pairs"][0]["arms"].values():
             self.assertTrue(arm["verifier"]["workspace_mutated"])
             self.assertNotIn("verifier-created.txt", arm["diff"])
+
+    def test_configured_shared_verifier_is_snapshotted_and_mounted_read_only(
+        self,
+    ) -> None:
+        self.fixture.isolate_basic_case()
+        self.fixture._write_suite(
+            "verifier-resources/shared/helper.txt", "configured shared value\n"
+        )
+        self.fixture._write_suite(
+            "verifier-resources/shared/verifier.py",
+            """import json
+import os
+from pathlib import Path
+
+workspace = Path(os.environ["EVAL_WORKSPACE"])
+shared = Path(os.environ["EVAL_SHARED_ROOT"])
+helper = shared / "helper.txt"
+answer = workspace / "answer.txt"
+try:
+    helper.write_text("mutated", encoding="utf-8")
+    read_only = False
+except OSError:
+    read_only = True
+passed = (
+    helper.read_text(encoding="utf-8") == "configured shared value\\n"
+    and answer.is_file()
+    and read_only
+)
+print(json.dumps({
+    "passed": passed,
+    "assertions": [{
+        "id": "answer-present",
+        "passed": passed,
+        "evidence": "configured shared helper was readable and immutable",
+    }],
+    "metrics": {},
+}))
+""",
+        )
+        self.fixture.use_v4_objective()
+        self.fixture.manifest["shared_verifier_dir"] = "verifier-resources/shared"
+        self.fixture.manifest["cases"][0]["verifier"]["argv"] = [
+            "python3",
+            "verifier-resources/shared/verifier.py",
+        ]
+        self.fixture.save_manifest()
+        provider = self.fixture.provider()
+
+        result = EvalRunner(self.load(), provider).run(
+            RunSelection(comparison_ids=("without-current",)),
+            output_dir=self.output("configured-shared-verifier"),
+        )
+
+        self.assertTrue(
+            all(
+                arm["verifier"]["passed"]
+                for pair in result["pairs"]
+                for arm in pair["arms"].values()
+            ),
+            result,
+        )
+        for pair in result["pairs"]:
+            for arm in pair["arms"].values():
+                self.assertTrue(
+                    arm["verifier"]["executed_argv"][1].endswith("/_shared/verifier.py")
+                )
+                self.assertTrue(
+                    any(
+                        value.startswith("BindReadOnlyPaths=")
+                        and value.endswith("/_shared")
+                        for value in arm["verifier"]["sandbox"]["properties"]
+                    )
+                )
+
+    def test_null_shared_verifier_omits_environment_and_mount(self) -> None:
+        self.fixture.isolate_basic_case()
+        self.fixture._write_suite(
+            "cases/testing/_shared/must-not-mount.txt", "legacy fallback\n"
+        )
+        self.fixture._write_suite(
+            "cases/basic/oracle/verifier.py",
+            """import json
+import os
+from pathlib import Path
+
+answer = Path(os.environ["EVAL_WORKSPACE"]) / "answer.txt"
+passed = answer.is_file() and "EVAL_SHARED_ROOT" not in os.environ
+print(json.dumps({
+    "passed": passed,
+    "assertions": [{
+        "id": "answer-present",
+        "passed": passed,
+        "evidence": "null shared verifier root was omitted",
+    }],
+    "metrics": {},
+}))
+""",
+        )
+        self.fixture.use_v4_objective()
+        provider = self.fixture.provider()
+
+        result = EvalRunner(self.load(), provider).run(
+            RunSelection(comparison_ids=("without-current",)),
+            output_dir=self.output("null-shared-verifier"),
+        )
+
+        self.assertTrue(
+            all(
+                arm["verifier"]["passed"]
+                and all(
+                    not (
+                        value.startswith("BindReadOnlyPaths=")
+                        and value.endswith("/_shared")
+                    )
+                    for value in arm["verifier"]["sandbox"]["properties"]
+                )
+                for pair in result["pairs"]
+                for arm in pair["arms"].values()
+            ),
+            result,
+        )
+
+    def test_legacy_shared_verifier_environment_is_preserved(self) -> None:
+        self.fixture._write_suite(
+            "cases/testing/_shared/helper.txt", "legacy shared value\n"
+        )
+        self.fixture._write_suite(
+            "cases/testing/_shared/verifier.py",
+            """import json
+import os
+from pathlib import Path
+
+shared = Path(os.environ["EVAL_SHARED_ROOT"])
+answer = Path(os.environ["EVAL_WORKSPACE"]) / "answer.txt"
+passed = (
+    answer.is_file()
+    and (shared / "helper.txt").read_text(encoding="utf-8") == "legacy shared value\\n"
+)
+print(json.dumps({
+    "passed": passed,
+    "assertions": [{
+        "id": "answer-present",
+        "passed": passed,
+        "evidence": "legacy shared verifier environment remains available",
+    }],
+    "metrics": {},
+}))
+""",
+        )
+        for version in (2, 3):
+            self.fixture.manifest = self.fixture._manifest()
+            self.fixture.isolate_basic_case()
+            if version == 3:
+                self.fixture.use_v3_objective()
+            self.fixture.manifest["cases"][0]["verifier"]["argv"] = [
+                "python3",
+                "cases/testing/_shared/verifier.py",
+            ]
+            self.fixture.save_manifest()
+            provider = self.fixture.provider()
+            suite = self.load()
+            runner = (
+                EvalRunner(suite, provider, provider)
+                if version == 2
+                else EvalRunner(suite, provider)
+            )
+
+            with runner:
+                result = runner.run(
+                    RunSelection(comparison_ids=("without-current",)),
+                    output_dir=self.output(f"legacy-shared-v{version}"),
+                )
+
+            with self.subTest(version=version):
+                self.assertTrue(
+                    all(
+                        arm["verifier"]["passed"]
+                        and any(
+                            value.startswith("BindReadOnlyPaths=")
+                            and value.endswith("/_shared")
+                            for value in arm["verifier"]["sandbox"]["properties"]
+                        )
+                        for pair in result["pairs"]
+                        for arm in pair["arms"].values()
+                    ),
+                    result,
+                )
+
+    def test_absent_legacy_shared_verifier_path_remains_unmounted(self) -> None:
+        verifier = """import json
+import os
+from pathlib import Path
+
+shared_value = os.environ.get("EVAL_SHARED_ROOT")
+answer = Path(os.environ["EVAL_WORKSPACE"]) / "answer.txt"
+passed = (
+    answer.is_file()
+    and shared_value is not None
+    and not Path(shared_value).exists()
+)
+print(json.dumps({
+    "passed": passed,
+    "assertions": [{
+        "id": "answer-present",
+        "passed": passed,
+        "evidence": "absent legacy shared path remains exported but unmounted",
+    }],
+    "metrics": {},
+}))
+"""
+        for version in (2, 3):
+            self.fixture.manifest = self.fixture._manifest()
+            self.fixture.isolate_basic_case()
+            self.fixture._write_suite("cases/basic/oracle/verifier.py", verifier)
+            if version == 3:
+                self.fixture.use_v3_objective()
+            provider = self.fixture.provider()
+            suite = self.load()
+            runner = (
+                EvalRunner(suite, provider, provider)
+                if version == 2
+                else EvalRunner(suite, provider)
+            )
+
+            with runner:
+                result = runner.run(
+                    RunSelection(comparison_ids=("without-current",)),
+                    output_dir=self.output(f"absent-legacy-shared-v{version}"),
+                )
+
+            with self.subTest(version=version):
+                self.assertTrue(
+                    all(
+                        arm["verifier"]["passed"]
+                        and all(
+                            not (
+                                value.startswith("BindReadOnlyPaths=")
+                                and value.endswith("/_shared")
+                            )
+                            for value in arm["verifier"]["sandbox"]["properties"]
+                        )
+                        for pair in result["pairs"]
+                        for arm in pair["arms"].values()
+                    ),
+                    result,
+                )
+
+    def test_configured_shared_verifier_drift_fails_before_provider_dispatch(
+        self,
+    ) -> None:
+        self.fixture.isolate_basic_case()
+        shared_path = "verifier-resources/shared/helper.py"
+        self.fixture._write_suite(shared_path, "VALUE = 1\n")
+        self.fixture.use_v4_objective()
+        self.fixture.manifest["shared_verifier_dir"] = "verifier-resources/shared"
+        self.fixture.save_manifest()
+        provider = self.fixture.provider()
+        runner = EvalRunner(self.load(), provider)
+        original_preflight = runner.preflight
+
+        def preflight_then_mutate(selection):
+            evidence = original_preflight(selection)
+            self.fixture._write_suite(shared_path, "VALUE = 2\n")
+            return evidence
+
+        with (
+            patch.object(runner, "preflight", side_effect=preflight_then_mutate),
+            self.assertRaisesRegex(RunnerError, "source drifted after preflight"),
+        ):
+            runner.run(
+                RunSelection(comparison_ids=("without-current",)),
+                output_dir=self.output("shared-verifier-drift"),
+            )
+        self.assertEqual(provider.agent_requests, [])
+
+    def test_configured_shared_verifier_revalidates_ancestors_after_load(self) -> None:
+        self.fixture.isolate_basic_case()
+        self.fixture._write_suite("verifier-resources/shared/helper.py", "VALUE = 1\n")
+        self.fixture.use_v4_objective()
+        self.fixture.manifest["shared_verifier_dir"] = "verifier-resources/shared"
+        self.fixture.save_manifest()
+        suite = self.load()
+        original = self.fixture.suite_root / "verifier-resources"
+        original.rename(self.fixture.suite_root / "original-verifier-resources")
+        external = self.fixture.root / "external-verifier-resources"
+        external.joinpath("shared").mkdir(parents=True)
+        external.joinpath("shared/helper.py").write_text(
+            "EXTERNAL = True\n", encoding="utf-8"
+        )
+        original.symlink_to(external, target_is_directory=True)
+        provider = self.fixture.provider()
+
+        with self.assertRaisesRegex(RunnerError, "traverses a symlink"):
+            EvalRunner(suite, provider).preflight(
+                RunSelection(comparison_ids=("without-current",))
+            )
+        self.assertEqual(provider.agent_requests, [])
+
+    def test_preflight_rejects_unmounted_suite_verifier_scripts(self) -> None:
+        self.fixture.isolate_basic_case()
+        self.fixture._write_suite("tools/verifier.py", _PASSING_VERIFIER)
+        self.fixture._write_suite("verifier-resources/shared/helper.py", "VALUE = 1\n")
+        for shared_verifier_dir in (None, "verifier-resources/shared"):
+            self.fixture.manifest = self.fixture._manifest()
+            self.fixture.isolate_basic_case()
+            self.fixture.use_v4_objective()
+            self.fixture.manifest["shared_verifier_dir"] = shared_verifier_dir
+            self.fixture.manifest["cases"][0]["verifier"]["argv"] = [
+                "python3",
+                "tools/verifier.py",
+            ]
+            self.fixture.save_manifest()
+            provider = self.fixture.provider()
+
+            with self.subTest(shared_verifier_dir=shared_verifier_dir):
+                with self.assertRaisesRegex(
+                    RunnerError, "outside case and shared verifier roots"
+                ):
+                    EvalRunner(self.load(), provider).preflight(
+                        RunSelection(comparison_ids=("without-current",))
+                    )
+                self.assertEqual(provider.agent_requests, [])
 
     def test_verifier_sandbox_hides_host_secrets_processes_and_network(self) -> None:
         secret = self.fixture.repository / "verifier-secret.txt"
@@ -3302,6 +3873,351 @@ print(json.dumps({"passed": passed, "assertions": [{
         self.assertEqual(
             preflight["sources"]["old"]["source_commit"], self.fixture.baseline_commit
         )
+
+    def test_configured_bundle_source_must_have_regular_entrypoint(self) -> None:
+        self.fixture._write(
+            "instruction-bundles/demo/references/rule.md", "# Rule\n\nPresent.\n"
+        )
+        self.fixture._git("add", "instruction-bundles")
+        self.fixture._git("commit", "-q", "-m", "bundle without entrypoint")
+        bundle_commit = self.fixture._git("rev-parse", "HEAD").strip()
+        self.fixture.manifest["variants"][2]["source_ref"] = bundle_commit
+        self.fixture.use_v4_objective("instruction-bundles/demo")
+        provider = self.fixture.provider()
+
+        with self.assertRaisesRegex(RunnerError, "regular SKILL.md entrypoint"):
+            EvalRunner(self.load(), provider).preflight(
+                RunSelection(comparison_ids=("without-current",))
+            )
+        self.assertEqual(provider.agent_requests, [])
+
+    def test_configured_bundle_source_rejects_symlink_traversal(self) -> None:
+        self.assertTrue(hasattr(os, "symlink"), "runner requires POSIX symlinks")
+        self.fixture._write("instruction-bundles/target/SKILL.md", "# Linked Bundle\n")
+        os.symlink(
+            self.fixture.repository / "instruction-bundles/target",
+            self.fixture.repository / "instruction-bundles/demo",
+            target_is_directory=True,
+        )
+        self.fixture._git("add", "instruction-bundles")
+        self.fixture._git("commit", "-q", "-m", "linked bundle")
+        bundle_commit = self.fixture._git("rev-parse", "HEAD").strip()
+        self.fixture.manifest["variants"][2]["source_ref"] = bundle_commit
+        self.fixture.use_v4_objective("instruction-bundles/demo")
+        provider = self.fixture.provider()
+
+        with self.assertRaisesRegex(RunnerError, "traverses symlink"):
+            EvalRunner(self.load(), provider).preflight(
+                RunSelection(comparison_ids=("without-current",))
+            )
+        self.assertEqual(provider.agent_requests, [])
+
+    def test_git_ref_configured_bundle_rejects_missing_entrypoint(self) -> None:
+        self.fixture._write(
+            "instruction-bundles/demo/references/rule.md", "# Rule\n\nPresent.\n"
+        )
+        self.fixture._git("add", "instruction-bundles")
+        self.fixture._git("commit", "-q", "-m", "bundle without entrypoint")
+        bundle_commit = self.fixture._git("rev-parse", "HEAD").strip()
+        self.fixture.manifest["variants"][1]["git_ref"] = bundle_commit
+        self.fixture.manifest["comparisons"] = [
+            {
+                "id": "without-old",
+                "control": "without",
+                "treatment": "old",
+                "repetitions": 3,
+                "comparator_order": "ab_ba",
+            }
+        ]
+        self.fixture.use_v4_objective("instruction-bundles/demo")
+        provider = self.fixture.provider()
+
+        with self.assertRaisesRegex(RunnerError, "no complete bundle directory"):
+            EvalRunner(self.load(), provider).preflight(
+                RunSelection(comparison_ids=("without-old",))
+            )
+        self.assertEqual(provider.agent_requests, [])
+
+    def test_git_ref_configured_bundle_rejects_special_entries(self) -> None:
+        self.assertTrue(hasattr(os, "symlink"), "runner requires POSIX symlinks")
+        self.fixture._write("instruction-bundles/target.md", "# Target\n")
+        os.symlink(
+            self.fixture.repository / "instruction-bundles/target.md",
+            self.fixture.repository / "instruction-bundles/SKILL.md",
+        )
+        self.fixture._git("add", "instruction-bundles")
+        self.fixture._git("commit", "-q", "-m", "bundle with special entry")
+        bundle_commit = self.fixture._git("rev-parse", "HEAD").strip()
+        self.fixture.manifest["variants"][1]["git_ref"] = bundle_commit
+        self.fixture.manifest["comparisons"] = [
+            {
+                "id": "without-old",
+                "control": "without",
+                "treatment": "old",
+                "repetitions": 3,
+                "comparator_order": "ab_ba",
+            }
+        ]
+        self.fixture.use_v4_objective("instruction-bundles")
+        provider = self.fixture.provider()
+
+        with self.assertRaisesRegex(RunnerError, "unsupported git entry"):
+            EvalRunner(self.load(), provider).preflight(
+                RunSelection(comparison_ids=("without-old",))
+            )
+        self.assertEqual(provider.agent_requests, [])
+
+    def test_dirty_configured_bundle_source_fails_preflight(self) -> None:
+        self.fixture._write(
+            "instruction-bundles/demo/SKILL.md", "# Configured Bundle\n"
+        )
+        self.fixture._git("add", "instruction-bundles")
+        self.fixture._git("commit", "-q", "-m", "configured bundle")
+        bundle_commit = self.fixture._git("rev-parse", "HEAD").strip()
+        self.fixture.manifest["variants"][2]["source_ref"] = bundle_commit
+        self.fixture.use_v4_objective("instruction-bundles/demo")
+        self.fixture._write(
+            "instruction-bundles/demo/SKILL.md",
+            "# Configured Bundle\n\nUncommitted change.\n",
+        )
+        provider = self.fixture.provider()
+
+        with self.assertRaisesRegex(RunnerError, "commit it before A/B evaluation"):
+            EvalRunner(self.load(), provider).preflight(
+                RunSelection(comparison_ids=("without-current",))
+            )
+        self.assertEqual(provider.agent_requests, [])
+
+    def test_configured_bundle_source_drift_after_preflight_fails_closed(self) -> None:
+        bundle_path = "instruction-bundles/demo/SKILL.md"
+        self.fixture._write(bundle_path, "# Configured Bundle\n")
+        self.fixture._git("add", "instruction-bundles")
+        self.fixture._git("commit", "-q", "-m", "configured bundle")
+        bundle_commit = self.fixture._git("rev-parse", "HEAD").strip()
+        self.fixture.manifest["variants"][2]["source_ref"] = bundle_commit
+        self.fixture.use_v4_objective("instruction-bundles/demo")
+        provider = self.fixture.provider()
+        runner = EvalRunner(self.load(), provider)
+        original_preflight = runner.preflight
+
+        def preflight_then_mutate(selection):
+            evidence = original_preflight(selection)
+            self.fixture._write(
+                bundle_path, "# Configured Bundle\n\nChanged after preflight.\n"
+            )
+            return evidence
+
+        with patch.object(runner, "preflight", side_effect=preflight_then_mutate):
+            result = runner.run(
+                RunSelection(comparison_ids=("without-current",)),
+                output_dir=self.output("configured-bundle-drift"),
+            )
+        self.assertFalse(result["passed"])
+        self.assertTrue(
+            all(
+                "source drifted after preflight" in pair["arms"]["treatment"]["error"]
+                for pair in result["pairs"]
+            )
+        )
+        self.assertTrue(
+            all(request.variant_id != "current" for request in provider.agent_requests)
+        )
+
+    def test_unrelated_uncommitted_path_does_not_dirty_configured_bundle(self) -> None:
+        self.fixture._write(
+            "instruction-bundles/demo/SKILL.md", "# Configured Bundle\n"
+        )
+        self.fixture._git("add", "instruction-bundles")
+        self.fixture._git("commit", "-q", "-m", "configured bundle")
+        bundle_commit = self.fixture._git("rev-parse", "HEAD").strip()
+        self.fixture.manifest["variants"][2]["source_ref"] = bundle_commit
+        self.fixture.use_v4_objective("instruction-bundles/demo")
+        self.fixture._write("unrelated.txt", "uncommitted but unrelated\n")
+        provider = self.fixture.provider()
+
+        preflight = EvalRunner(self.load(), provider).preflight(
+            RunSelection(comparison_ids=("without-current",))
+        )
+        self.assertEqual(
+            preflight["sources"]["current"]["expected_source_commit"], bundle_commit
+        )
+        self.assertEqual(provider.agent_requests, [])
+
+    def test_v4_ignores_untracked_empty_bundle_directories(self) -> None:
+        self.fixture._write(
+            "instruction-bundles/demo/SKILL.md", "# Configured Bundle\n"
+        )
+        self.fixture._git("add", "instruction-bundles")
+        self.fixture._git("commit", "-q", "-m", "configured bundle")
+        bundle_commit = self.fixture._git("rev-parse", "HEAD").strip()
+        self.fixture.manifest["variants"][1]["git_ref"] = bundle_commit
+        self.fixture.manifest["variants"][2]["source_ref"] = bundle_commit
+        self.fixture.use_v4_objective("instruction-bundles/demo")
+        empty = self.fixture.repository / "instruction-bundles/demo"
+        for index in range(runner_module.MAX_TREE_DEPTH + 1):
+            empty /= f"empty-{index}"
+        empty.mkdir(parents=True)
+
+        provider = self.fixture.provider()
+        preflight = EvalRunner(self.load(), provider).preflight(
+            RunSelection(comparison_ids=("old-current",))
+        )
+
+        self.assertFalse(preflight["sources"]["current"]["source_dirty"])
+        self.assertEqual(provider.agent_requests, [])
+
+    def test_v4_bounds_empty_directory_traversal_entries(self) -> None:
+        self.fixture._write(
+            "instruction-bundles/demo/SKILL.md", "# Configured Bundle\n"
+        )
+        self.fixture._git("add", "instruction-bundles")
+        self.fixture._git("commit", "-q", "-m", "configured bundle")
+        bundle_commit = self.fixture._git("rev-parse", "HEAD").strip()
+        self.fixture.manifest["variants"][2]["source_ref"] = bundle_commit
+        self.fixture.use_v4_objective("instruction-bundles/demo")
+        bundle = self.fixture.repository / "instruction-bundles/demo"
+        for index in range(3):
+            bundle.joinpath(f"empty-{index}").mkdir()
+
+        with (
+            patch.object(runner_module, "MAX_WORKTREE_SCAN_ENTRIES", 2),
+            patch.object(
+                runner_module.os,
+                "walk",
+                side_effect=AssertionError("normalized traversal must stream entries"),
+            ),
+            self.assertRaisesRegex(
+                RunnerError, "worktree traversal exceeds maximum entries 2"
+            ),
+        ):
+            runner_module._scan_tree(
+                bundle,
+                ignore_generated_caches=True,
+                ignore_empty_directories=True,
+            )
+
+    def test_v4_bounds_empty_directory_traversal_depth(self) -> None:
+        self.fixture._write(
+            "instruction-bundles/demo/SKILL.md", "# Configured Bundle\n"
+        )
+        self.fixture._git("add", "instruction-bundles")
+        self.fixture._git("commit", "-q", "-m", "configured bundle")
+        bundle_commit = self.fixture._git("rev-parse", "HEAD").strip()
+        self.fixture.manifest["variants"][2]["source_ref"] = bundle_commit
+        self.fixture.use_v4_objective("instruction-bundles/demo")
+        empty = self.fixture.repository / "instruction-bundles/demo"
+        for index in range(3):
+            empty /= f"empty-{index}"
+        empty.mkdir(parents=True)
+
+        with (
+            patch.object(runner_module, "MAX_WORKTREE_SCAN_DEPTH", 2),
+            self.assertRaisesRegex(
+                RunnerError, "worktree traversal exceeds maximum depth 2"
+            ),
+        ):
+            EvalRunner(self.load(), self.fixture.provider()).preflight(
+                RunSelection(comparison_ids=("without-current",))
+            )
+
+    def test_configured_bundle_file_limit_matches_git_and_worktree(self) -> None:
+        self.fixture._write("instruction-bundles/demo/SKILL.md", "12345")
+        self.fixture._git("add", "instruction-bundles")
+        self.fixture._git("commit", "-q", "-m", "oversized bundle file")
+        bundle_commit = self.fixture._git("rev-parse", "HEAD").strip()
+        self.fixture.manifest["variants"][1]["git_ref"] = bundle_commit
+        self.fixture.manifest["variants"][2]["source_ref"] = bundle_commit
+        self.fixture.use_v4_objective("instruction-bundles/demo")
+
+        with patch.object(runner_module, "MAX_FILE_BYTES", 4):
+            self.assert_configured_bundle_rejected_for_git_and_worktree(
+                "bundle snapshot file exceeds 4 bytes",
+                "tree file exceeds 4 bytes",
+            )
+
+    def test_configured_bundle_total_limit_matches_git_and_worktree(self) -> None:
+        self.fixture._write("instruction-bundles/demo/SKILL.md", "1234")
+        self.fixture._write("instruction-bundles/demo/rule.md", "5678")
+        self.fixture._git("add", "instruction-bundles")
+        self.fixture._git("commit", "-q", "-m", "oversized bundle tree")
+        bundle_commit = self.fixture._git("rev-parse", "HEAD").strip()
+        self.fixture.manifest["variants"][1]["git_ref"] = bundle_commit
+        self.fixture.manifest["variants"][2]["source_ref"] = bundle_commit
+        self.fixture.use_v4_objective("instruction-bundles/demo")
+
+        with (
+            patch.object(runner_module, "MAX_FILE_BYTES", 4),
+            patch.object(runner_module, "MAX_TREE_BYTES", 7),
+        ):
+            self.assert_configured_bundle_rejected_for_git_and_worktree(
+                "bundle snapshot exceeds 7 bytes",
+                "tree exceeds 7 bytes",
+            )
+
+    def test_configured_bundle_entry_limit_matches_git_and_worktree(self) -> None:
+        self.fixture._write("instruction-bundles/demo/SKILL.md", "# Bundle\n")
+        self.fixture._write("instruction-bundles/demo/references/rule.md", "rule\n")
+        self.fixture._git("add", "instruction-bundles")
+        self.fixture._git("commit", "-q", "-m", "too many bundle entries")
+        bundle_commit = self.fixture._git("rev-parse", "HEAD").strip()
+        self.fixture.manifest["variants"][1]["git_ref"] = bundle_commit
+        self.fixture.manifest["variants"][2]["source_ref"] = bundle_commit
+        self.fixture.use_v4_objective("instruction-bundles/demo")
+
+        with patch.object(runner_module, "MAX_TREE_ENTRIES", 2):
+            self.assert_configured_bundle_rejected_for_git_and_worktree(
+                "bundle snapshot exceeds maximum entries 2",
+                "tree exceeds maximum entries 2",
+            )
+
+    def test_configured_bundle_depth_limit_matches_git_and_worktree(self) -> None:
+        self.fixture._write("instruction-bundles/demo/SKILL.md", "# Bundle\n")
+        self.fixture._write(
+            "instruction-bundles/demo/references/nested/rule.md", "rule\n"
+        )
+        self.fixture._git("add", "instruction-bundles")
+        self.fixture._git("commit", "-q", "-m", "bundle too deep")
+        bundle_commit = self.fixture._git("rev-parse", "HEAD").strip()
+        self.fixture.manifest["variants"][1]["git_ref"] = bundle_commit
+        self.fixture.manifest["variants"][2]["source_ref"] = bundle_commit
+        self.fixture.use_v4_objective("instruction-bundles/demo")
+
+        with patch.object(runner_module, "MAX_TREE_DEPTH", 1):
+            self.assert_configured_bundle_rejected_for_git_and_worktree(
+                "bundle snapshot exceeds maximum depth 1",
+                "tree exceeds maximum depth 1",
+            )
+
+    def test_git_bundle_metadata_is_bounded_while_streaming(self) -> None:
+        self.fixture._write(
+            "instruction-bundles/demo/SKILL.md", "# Configured Bundle\n"
+        )
+        self.fixture._write(
+            "instruction-bundles/demo/references/long-file-name.md", "rule\n"
+        )
+        self.fixture._git("add", "instruction-bundles")
+        self.fixture._git("commit", "-q", "-m", "bundle metadata")
+        bundle_commit = self.fixture._git("rev-parse", "HEAD").strip()
+        self.fixture.manifest["variants"][1]["git_ref"] = bundle_commit
+        self.fixture.use_v4_objective("instruction-bundles/demo")
+        suite = self.load()
+        without = next(variant for variant in suite.variants if variant.id == "without")
+        old = next(variant for variant in suite.variants if variant.id == "old")
+        comparison = replace(
+            suite.comparisons[0],
+            id="without-old",
+            control="without",
+            treatment="old",
+        )
+        git_suite = replace(suite, variants=(without, old), comparisons=(comparison,))
+
+        with (
+            patch.object(runner_module, "MAX_GIT_TREE_METADATA_BYTES", 32),
+            self.assertRaisesRegex(RunnerError, "git tree metadata exceeds 32 bytes"),
+        ):
+            EvalRunner(git_suite, self.fixture.provider()).preflight(
+                RunSelection(comparison_ids=("without-old",))
+            )
 
     def test_worktree_source_ref_pins_bytes_not_later_unrelated_head(self) -> None:
         self.fixture._write("notes.txt", "later non-skill commit\n")
@@ -4989,6 +5905,318 @@ class ManifestValidationTests(unittest.TestCase):
                 with self.assertRaises(ManifestError):
                     load_suite(self.fixture.manifest_path)
 
+    def test_v4_requires_bundle_source_and_legacy_versions_derive_it(self) -> None:
+        schema = json.loads((HARNESS_ROOT / "suite.schema.json").read_text())
+        original_bytes = self.fixture.manifest_path.read_bytes()
+        legacy = load_suite(self.fixture.manifest_path)
+        self.assertEqual(legacy.raw_bytes, original_bytes)
+        self.assertEqual(
+            legacy.manifest_hash, hashlib.sha256(original_bytes).hexdigest()
+        )
+        self.assertEqual(legacy.cases[0].bundle_source.as_posix(), "skills/demo")
+
+        self.fixture.use_v3_judged()
+        version_three_bytes = self.fixture.manifest_path.read_bytes()
+        version_three = load_suite(self.fixture.manifest_path)
+        self.assertEqual(version_three.raw_bytes, version_three_bytes)
+        self.assertEqual(
+            version_three.manifest_hash,
+            hashlib.sha256(version_three_bytes).hexdigest(),
+        )
+        self.assertEqual(version_three.cases[0].bundle_source.as_posix(), "skills/demo")
+        self.assertNotIn("bundle_source", version_three.raw["cases"][0])
+
+        self.fixture.use_v4_judged("instruction-bundles/demo")
+        version_four = copy.deepcopy(self.fixture.manifest)
+        self.assertEqual(
+            list(Draft202012Validator(schema).iter_errors(version_four)), []
+        )
+        parsed = load_suite(self.fixture.manifest_path)
+        self.assertEqual(
+            parsed.cases[0].bundle_source.as_posix(), "instruction-bundles/demo"
+        )
+
+        self.fixture.manifest = self.fixture._manifest()
+        self.fixture.use_v4_objective("instruction-bundles/demo")
+        self.assertEqual(
+            list(Draft202012Validator(schema).iter_errors(self.fixture.manifest)), []
+        )
+        self.assertEqual(
+            load_suite(self.fixture.manifest_path).cases[0].bundle_source.as_posix(),
+            "instruction-bundles/demo",
+        )
+
+    def test_bundle_source_schema_and_parser_reject_version_and_path_mutations(
+        self,
+    ) -> None:
+        schema = json.loads((HARNESS_ROOT / "suite.schema.json").read_text())
+        self.fixture.use_v4_judged("instruction-bundles/demo")
+        valid = copy.deepcopy(self.fixture.manifest)
+        mutations: list[dict[str, object]] = []
+
+        missing = copy.deepcopy(valid)
+        del missing["cases"][0]["bundle_source"]
+        mutations.append(missing)
+
+        for version in (2, 3):
+            legacy = copy.deepcopy(valid)
+            legacy["schema_version"] = version
+            if version == 2:
+                legacy.pop("evaluation_mode", None)
+                legacy.pop("comparator_profile", None)
+            mutations.append(legacy)
+
+        for value in (
+            "/absolute",
+            ".",
+            "../escape",
+            "./prefixed",
+            "double//separator",
+            "trailing/",
+            "windows\\separator",
+            "control\u0001character",
+            "trailing-control\n",
+            "unpaired-surrogate\ud800",
+        ):
+            mutation = copy.deepcopy(valid)
+            mutation["cases"][0]["bundle_source"] = value
+            mutations.append(mutation)
+
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                self.assertTrue(
+                    list(Draft202012Validator(schema).iter_errors(mutation))
+                )
+                self.fixture.manifest = mutation
+                self.fixture.save_manifest()
+                with self.assertRaises(ManifestError):
+                    load_suite(self.fixture.manifest_path)
+
+    def test_v4_preserves_judged_and_objective_mode_exclusivity(self) -> None:
+        schema = json.loads((HARNESS_ROOT / "suite.schema.json").read_text())
+        self.fixture.use_v4_judged()
+        judged = copy.deepcopy(self.fixture.manifest)
+        judged_mutations: list[dict[str, object]] = []
+        for field in ("comparator", "comparator_profile"):
+            mutation = copy.deepcopy(judged)
+            del mutation[field]
+            judged_mutations.append(mutation)
+        missing_contract = copy.deepcopy(judged)
+        del missing_contract["cases"][0]["comparator_contract"]
+        judged_mutations.append(missing_contract)
+
+        self.fixture.manifest = self.fixture._manifest()
+        self.fixture.use_v4_objective()
+        objective = copy.deepcopy(self.fixture.manifest)
+        objective_mutations: list[dict[str, object]] = []
+        for field in ("comparator", "comparator_profile"):
+            mutation = copy.deepcopy(objective)
+            if field == "comparator":
+                mutation[field] = self.fixture._manifest()[field]
+            else:
+                mutation[field] = {
+                    "kind": "builtin",
+                    "id": "software-engineering-v2.3",
+                }
+            objective_mutations.append(mutation)
+        unexpected_contract = copy.deepcopy(objective)
+        unexpected_contract["cases"][0]["comparator_contract"] = (
+            self.fixture._manifest()["cases"][0]["comparator_contract"]
+        )
+        objective_mutations.append(unexpected_contract)
+
+        for mutation in (*judged_mutations, *objective_mutations):
+            with self.subTest(mutation=mutation):
+                self.assertTrue(
+                    list(Draft202012Validator(schema).iter_errors(mutation))
+                )
+                self.fixture.manifest = mutation
+                self.fixture.save_manifest()
+                with self.assertRaises(ManifestError):
+                    load_suite(self.fixture.manifest_path)
+
+    def test_shared_verifier_dir_versions_null_and_configured(self) -> None:
+        schema = json.loads((HARNESS_ROOT / "suite.schema.json").read_text())
+        self.assertIsNone(load_suite(self.fixture.manifest_path).shared_verifier_dir)
+
+        self.fixture.use_v3_judged()
+        version_three_bytes = self.fixture.manifest_path.read_bytes()
+        version_three = load_suite(self.fixture.manifest_path)
+        self.assertIsNone(version_three.shared_verifier_dir)
+        self.assertEqual(version_three.raw_bytes, version_three_bytes)
+
+        self.fixture.manifest = self.fixture._manifest()
+        self.fixture.isolate_basic_case()
+        self.fixture._write_suite(
+            "cases/testing/_shared/helper.py", "LEGACY_SHARED = 1\n"
+        )
+        legacy_bytes = self.fixture.manifest_path.read_bytes()
+        legacy_shared = load_suite(self.fixture.manifest_path)
+        self.assertEqual(legacy_shared.raw_bytes, legacy_bytes)
+        self.assertEqual(
+            legacy_shared.shared_verifier_dir,
+            self.fixture.suite_root / "cases/testing/_shared",
+        )
+
+        self.fixture.use_v4_objective()
+        null_payload = copy.deepcopy(self.fixture.manifest)
+        self.assertEqual(
+            list(Draft202012Validator(schema).iter_errors(null_payload)), []
+        )
+        self.assertIsNone(load_suite(self.fixture.manifest_path).shared_verifier_dir)
+
+        missing = copy.deepcopy(null_payload)
+        del missing["shared_verifier_dir"]
+        self.assertTrue(list(Draft202012Validator(schema).iter_errors(missing)))
+        self.fixture.manifest = missing
+        self.fixture.save_manifest()
+        with self.assertRaises(ManifestError):
+            load_suite(self.fixture.manifest_path)
+
+        for version in (2, 3):
+            legacy = self.fixture._manifest()
+            if version == 3:
+                self.fixture.manifest = legacy
+                self.fixture.use_v3_judged()
+                legacy = copy.deepcopy(self.fixture.manifest)
+            legacy["shared_verifier_dir"] = None
+            self.assertTrue(list(Draft202012Validator(schema).iter_errors(legacy)))
+            self.fixture.manifest = legacy
+            self.fixture.save_manifest()
+            with self.assertRaises(ManifestError):
+                load_suite(self.fixture.manifest_path)
+
+        self.fixture.manifest = self.fixture._manifest()
+        self.fixture.isolate_basic_case()
+        self.fixture._write_suite(
+            "verifier-resources/shared/helper.py", "SHARED_VALUE = 1\n"
+        )
+        self.fixture.use_v4_objective()
+        self.fixture.manifest["shared_verifier_dir"] = "verifier-resources/shared"
+        self.fixture.save_manifest()
+        configured_payload = copy.deepcopy(self.fixture.manifest)
+        self.assertEqual(
+            list(Draft202012Validator(schema).iter_errors(configured_payload)), []
+        )
+        self.assertEqual(
+            load_suite(self.fixture.manifest_path).shared_verifier_dir,
+            self.fixture.suite_root / "verifier-resources/shared",
+        )
+
+    def test_shared_verifier_dir_rejects_invalid_symlink_and_overlap(self) -> None:
+        schema = json.loads((HARNESS_ROOT / "suite.schema.json").read_text())
+        self.fixture.isolate_basic_case()
+        self.fixture._write_suite("verifier-resources/shared/helper.py", "value = 1\n")
+        self.fixture.use_v4_objective()
+        valid = copy.deepcopy(self.fixture.manifest)
+        invalid_values = (
+            "",
+            ".",
+            "/absolute",
+            "../escape",
+            "./prefixed",
+            "double//separator",
+            "trailing/",
+            "windows\\separator",
+            "control\n",
+            "surrogate\ud800",
+        )
+        for value in invalid_values:
+            mutation = copy.deepcopy(valid)
+            mutation["shared_verifier_dir"] = value
+            with self.subTest(value=value):
+                self.assertTrue(
+                    list(Draft202012Validator(schema).iter_errors(mutation))
+                )
+                self.fixture.manifest = mutation
+                self.fixture.save_manifest()
+                with self.assertRaises(ManifestError):
+                    load_suite(self.fixture.manifest_path)
+
+        missing = copy.deepcopy(valid)
+        missing["shared_verifier_dir"] = "verifier-resources/missing"
+        self.fixture.manifest = missing
+        self.fixture.save_manifest()
+        with self.assertRaisesRegex(ManifestError, "cannot resolve"):
+            load_suite(self.fixture.manifest_path)
+
+        linked = self.fixture.suite_root / "verifier-resources/linked"
+        linked.symlink_to(
+            self.fixture.suite_root / "verifier-resources/shared",
+            target_is_directory=True,
+        )
+        symlinked = copy.deepcopy(valid)
+        symlinked["shared_verifier_dir"] = "verifier-resources/linked"
+        self.fixture.manifest = symlinked
+        self.fixture.save_manifest()
+        with self.assertRaisesRegex(ManifestError, "must not traverse a symlink"):
+            load_suite(self.fixture.manifest_path)
+
+        overlap = copy.deepcopy(valid)
+        overlap["shared_verifier_dir"] = "cases/basic/fixture"
+        self.fixture.manifest = overlap
+        self.fixture.save_manifest()
+        with self.assertRaisesRegex(ManifestError, "overlaps case basic"):
+            load_suite(self.fixture.manifest_path)
+
+    def test_legacy_shared_verifier_dir_fails_closed_on_symlinks(self) -> None:
+        external = self.fixture.root / "external-legacy-shared"
+        external.mkdir()
+        shared = self.fixture.suite_root / "cases/testing/_shared"
+        shared.parent.mkdir(parents=True)
+        shared.symlink_to(external, target_is_directory=True)
+
+        for version in (2, 3):
+            self.fixture.manifest = self.fixture._manifest()
+            if version == 3:
+                self.fixture.use_v3_judged()
+            else:
+                self.fixture.save_manifest()
+            with self.subTest(version=version, link="leaf"):
+                with self.assertRaisesRegex(
+                    ManifestError, "must not traverse a symlink"
+                ):
+                    load_suite(self.fixture.manifest_path)
+
+        shared.unlink()
+        shutil.rmtree(self.fixture.suite_root / "cases")
+        external_cases = self.fixture.root / "external-cases"
+        external_cases.joinpath("testing/_shared").mkdir(parents=True)
+        (self.fixture.suite_root / "cases").symlink_to(
+            external_cases, target_is_directory=True
+        )
+        for version in (2, 3):
+            self.fixture.manifest = self.fixture._manifest()
+            if version == 3:
+                self.fixture.use_v3_judged()
+            else:
+                self.fixture.save_manifest()
+            with self.subTest(version=version, link="ancestor"):
+                with self.assertRaisesRegex(
+                    ManifestError, "must not traverse a symlink"
+                ):
+                    load_suite(self.fixture.manifest_path)
+
+    def test_shared_verifier_dir_rejects_bundle_and_context_overlap(self) -> None:
+        self.fixture.isolate_basic_case()
+        self.fixture._write_suite("verifier-resources/shared/helper.py", "VALUE = 1\n")
+        self.fixture._write_suite(
+            "verifier-resources/SKILL.md", "# Verifier resources must stay private\n"
+        )
+        self.fixture.use_v4_objective("eval-suite/verifier-resources")
+        self.fixture.manifest["shared_verifier_dir"] = "verifier-resources/shared"
+        self.fixture.save_manifest()
+        with self.assertRaisesRegex(ManifestError, "overlaps case basic"):
+            load_suite(self.fixture.manifest_path)
+
+        self.fixture.manifest["cases"][0]["bundle_source"] = "skills/demo"
+        self.fixture.manifest["cases"][0]["context_files"] = [
+            "eval-suite/verifier-resources/shared/helper.py"
+        ]
+        self.fixture.save_manifest()
+        with self.assertRaisesRegex(ManifestError, "overlaps case basic"):
+            load_suite(self.fixture.manifest_path)
+
     def test_suite_local_profile_is_contained_and_never_authoritative(self) -> None:
         self.fixture.create_data_profile("profiles/local")
         self.fixture.use_v3_judged({"kind": "suite_local", "path": "profiles/local"})
@@ -5584,13 +6812,13 @@ class CheckedInSuiteTests(unittest.TestCase):
             schema["properties"]["cases"]["items"]["required"],
         )
 
-    def test_suite_schema_supports_strict_v2_and_v3_modes(self) -> None:
+    def test_suite_schema_supports_strict_v2_v3_and_v4_modes(self) -> None:
         schema = json.loads(
             (HARNESS_ROOT / "suite.schema.json").read_text(encoding="utf-8")
         )
         self.assertEqual(
             [branch["$ref"] for branch in schema["oneOf"]],
-            ["#/$defs/suiteV2", "#/$defs/suiteV3"],
+            ["#/$defs/suiteV2", "#/$defs/suiteV3", "#/$defs/suiteV4"],
         )
         self.assertEqual(
             schema["$defs"]["suiteV2"]["properties"]["schema_version"]["const"], 2
@@ -5602,6 +6830,10 @@ class CheckedInSuiteTests(unittest.TestCase):
             schema["$defs"]["suiteV3"]["properties"]["evaluation_mode"]["enum"],
             ["judged", "objective_only"],
         )
+        self.assertEqual(
+            schema["$defs"]["suiteV4"]["properties"]["schema_version"]["const"], 4
+        )
+        self.assertIn("shared_verifier_dir", schema["$defs"]["suiteV4"]["required"])
 
     def test_gcc_attestation_includes_derived_driver_closure(self) -> None:
         gcc = shutil.which("gcc")
