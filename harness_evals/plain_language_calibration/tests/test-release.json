@@ -148,7 +148,7 @@
     "profile_registry_source_sha256": "a1fb55b8ac27c8715feeeeac8f0df61f8d789514c4c12faf9508a25dfe466d26",
     "provider_capability_registry_source_sha256": "d0c09ed8df6b8ab2704045e71f7d7719c4d3639e028d156f7a6e58783661a3a5",
     "harness_manifest_source_sha256": "519d1d8c420e59de7a23369fc38d5fa850bfda65ce6b2a9677fb9c3e7c0ee5af",
-    "harness_package_source_sha256": "27e0b708e749e16b666fe1aa610257f847b6651cd1fa88512d23e068d9e6fa8e",
+    "harness_package_source_sha256": "acb1e7569050fc9385c033b0c8f010fc7827dd2be5f4604ebec20c9f192855a6",
     "run_evals_source_sha256": "bb9d15adae63f5cedbb5f972ac1b38a0e0524b89651e73713fa8d606f26803f8",
     "holdout_plan_source_sha256": "3bf136f2f904fe5d97147c5a0c9065c9f766c390c5403e1bf585ff8428ec61a3",
     "prepare_holdout_plan_source_sha256": "dd841c84c633677d81b41f5ddd858cb7873dcc3e3a5b76604be5ff1873a04d0f",

@@ -2,8 +2,8 @@ cff-version: 1.2.0
 message: If you use Harness Evals in published work, cite this software release.
 title: Harness Evals
 type: software
-version: 0.2.0
-date-released: 2026-07-12
+version: 0.3.0
+date-released: 2026-07-13
 authors:
   - family-names: Seal
     given-names: Dhiman

@@ -4,6 +4,8 @@ All notable changes to Harness Evals are documented in this file. The format fol
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-13
+
 ### Added
 
 - Added schema v4 with explicit per-case bundle source paths and optional contained shared verifier resources.
@@ -15,6 +17,9 @@ All notable changes to Harness Evals are documented in this file. The format fol
 - Added schema v7 with explicit workspace-diff, final-text, and final-JSON artifact contracts.
 - Added bounded LF text and RFC 8785 JSON normalization with canonical artifact evidence.
 - Added read-only verifier artifact mounts and pristine read-only fixture workspaces for final-output cases.
+- Added hash-locked runtime, test, quality, build, and fuzz dependency sets for reproducible CI installs.
+- Added bounded pull-request fuzzing and a weekly extended Atheris campaign for final-JSON normalization.
+- Added a protected-tag release workflow that rebuilds and inspects distributions, publishes SHA-256 checksums, and records GitHub/Sigstore build provenance.
 
 ### Changed
 
@@ -22,6 +27,15 @@ All notable changes to Harness Evals are documented in this file. The format fol
 - Limited holdout-plan schema v2 to the legacy schema-v2 through schema-v4 candidate/original adapter without rewriting historical plan bytes.
 - Routed provider construction, scheduling, sandbox selection, billing evidence, and provenance through reviewed adapter capabilities while preserving schema-v2 through schema-v5 compatibility.
 - Advanced reviewed provider capabilities to revision 2 for declared final-output capture; unconsumed schema-v4 authority plans from revision 1 must be re-prepared.
+- Refreshed the supported Codex app-server runtime contract from `0.144.1` to `0.144.3` without changing the canonical protocol schema.
+- Required wheel and sdist package metadata to agree with their packaged `harness_evals.__version__` declaration.
+
+### Migration
+
+- To adopt generic source authority, migrate an unconsumed suite to schema v5, add `holdout.comparison_ids` in manifest order, validate the suite, and prepare a new holdout plan.
+- To adopt reviewed provider authority, migrate to schema v6, replace legacy provider kinds with registered adapter IDs, validate the suite, and prepare a new schema-v4 holdout plan.
+- To adopt declared output artifacts, migrate to schema v7 and add exactly one `artifact_contract` to every case. Existing schema-v2 through schema-v6 cases retain the workspace-diff compatibility default.
+- Re-prepare every unconsumed schema-v4 plan created against provider capability revision 1. Never rewrite a reviewed or consumed plan.
 
 ### Security
 
@@ -29,10 +43,11 @@ All notable changes to Harness Evals are documented in this file. The format fol
 - Added domain-separated source fingerprints over bundle locators, paths, bytes, executable modes, and context files; equal evaluated arms, source drift, mode confusion, and authority substitution fail before dispatch.
 - Bound production provider authority to reviewed capability, configuration, runtime provenance, executable identity, and non-injected provider instances; drift and instance substitution fail before dispatch or release.
 - Reject malformed output before verification or judgment, reject uncalibrated judged artifact kinds before dispatch, and isolate final-output verification from candidate workspace mutations.
+- Pin every Python CI dependency by cryptographic hash, validate all release distributions with Twine, and attach signed build provenance to release artifacts.
 
 ## [0.2.0] - 2026-07-12
 
-### Changed (2)
+### Changed
 
 - Repositioned the project around A/B evaluation of user-defined skills and instruction bundles through agent harnesses; engineering and testing remain the first reference corpus rather than the evaluator boundary.
 - Derived holdout skill cells and minimum-case gates from each selected suite instead of requiring the built-in `engineering` and `testing` identifiers.
@@ -40,7 +55,7 @@ All notable changes to Harness Evals are documented in this file. The format fol
 
 ## [0.1.0] - 2026-07-12
 
-### Added (2)
+### Added
 
 - Standalone MIT-licensed `harness-evals` Python package and console commands.
 - Seventeen calibrated software engineering and testing cases with objective verifiers and adversarial oracle calibration.
@@ -48,6 +63,7 @@ All notable changes to Harness Evals are documented in this file. The format fol
 - Repository-local `engineering` and `testing` reference bundles for exercising Git-bound comparison variants.
 - CI, CodeQL, OpenSSF Scorecard, Dependabot, issue forms, contribution policy, security reporting, governance, support, and release documentation.
 
-[Unreleased]: https://github.com/Dhi13man/harness-evals/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Dhi13man/harness-evals/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Dhi13man/harness-evals/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Dhi13man/harness-evals/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Dhi13man/harness-evals/releases/tag/v0.1.0

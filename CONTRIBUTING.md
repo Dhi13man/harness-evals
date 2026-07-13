@@ -75,4 +75,4 @@ Use imperative, scoped commit subjects that explain intent, such as `fix(runner)
 
 ## Release Process
 
-Releases are cut from a clean protected `main` commit after CI, package build and install smoke, schema and release-lock reproduction, corpus calibration, secret scanning, and changelog review pass. The maintainer tags `vMAJOR.MINOR.PATCH`, publishes the GitHub release from the matching changelog section, and verifies the release assets and repository community profile.
+Releases are cut from a clean protected `main` commit after CI, package build and install smoke, schema and release-lock reproduction, corpus calibration, secret scanning, and changelog review pass. The maintainer creates a protected annotated `vMAJOR.MINOR.PATCH` tag. The release workflow verifies that the tag is reachable from `main` and matches package metadata, rebuilds and inspects the distributions from hash-locked dependencies, generates checksums and signed provenance, and publishes the matching changelog section with the GitHub release. The maintainer then verifies the published assets, attestations, and repository community profile.

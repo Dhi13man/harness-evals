@@ -1,0 +1,101 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  attestations: write
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  github-release:
+    name: GitHub Release
+    if: github.repository == 'Dhi13man/harness-evals'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/build.txt
+      - name: Validate release identity
+        run: |
+          test "$(git cat-file -t "$GITHUB_REF")" = tag
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$(git rev-list -n 1 "$GITHUB_REF")" origin/main
+          python - <<'PY'
+          import ast
+          import os
+          import tomllib
+          from pathlib import Path
+
+          project_version = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+          module = ast.parse(Path("harness_evals/__init__.py").read_text(encoding="utf-8"))
+          module_versions = [
+              node.value.value
+              for node in module.body
+              if isinstance(node, ast.Assign)
+              and any(isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets)
+              and isinstance(node.value, ast.Constant)
+              and isinstance(node.value.value, str)
+          ]
+          if module_versions != [project_version]:
+              raise SystemExit("package metadata and module versions differ")
+          if os.environ["GITHUB_REF_NAME"] != f"v{project_version}":
+              raise SystemExit("tag and package versions differ")
+          PY
+      - name: Install build tools
+        run: >-
+          python -m pip install --require-hashes --only-binary=:all: -r requirements/build.txt
+      - name: Build and inspect distributions
+        run: |
+          python -m build --no-isolation
+          python -m twine check dist/*
+          python tests/run_installed_package_smoke.py --wheel dist/*.whl --sdist dist/*.tar.gz
+          (cd dist && sha256sum * > ../SHA256SUMS)
+      - name: Attest release provenance
+        id: attest
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-checksums: SHA256SUMS
+      - name: Prepare release notes and provenance bundle
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          version = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+          lines = Path("CHANGELOG.md").read_text(encoding="utf-8").splitlines()
+          start = next((index for index, line in enumerate(lines) if line.startswith(f"## [{version}] - ")), None)
+          if start is None:
+              raise SystemExit(f"CHANGELOG.md has no {version} release section")
+          end = next((index for index in range(start + 1, len(lines)) if lines[index].startswith("## [")), len(lines))
+          notes = "\n".join(lines[start + 1 : end]).strip()
+          if not notes:
+              raise SystemExit(f"CHANGELOG.md has an empty {version} release section")
+          Path("/tmp/release-notes.md").write_text(notes + "\n", encoding="utf-8")
+          PY
+          cp "${{ steps.attest.outputs.bundle-path }}" "dist/harness_evals-${GITHUB_REF_NAME#v}.sigstore.json"
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Harness Evals ${GITHUB_REF_NAME#v}" \
+            --notes-file /tmp/release-notes.md \
+            --verify-tag
