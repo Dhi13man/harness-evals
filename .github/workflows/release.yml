@@ -12,9 +12,53 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  authorize:
+    name: Authorize release identity
+    if: github.repository == 'Dhi13man/harness-evals'
+    permissions:
+      checks: read
+      contents: read
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Validate protected release identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag_type="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq .object.type)"
+          tag_object="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq .object.sha)"
+          test "$tag_type" = tag
+          tag_target_type="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object" --jq .object.type)"
+          tag_commit="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object" --jq .object.sha)"
+          main_commit="$(gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq .commit.sha)"
+          test "$tag_target_type" = commit
+          test "$tag_commit" = "$main_commit"
+          gh api "repos/$GITHUB_REPOSITORY/commits/$tag_commit/check-runs?per_page=100" > /tmp/check-runs.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          required_checks = {
+              "Analyze Python",
+              "Calibration / software",
+              "Calibration / testing",
+              "Fuzz / final JSON",
+              "Package",
+              "Quality",
+              "Unit / Python 3.11",
+              "Unit / Python 3.12",
+          }
+          check_runs = json.loads(Path("/tmp/check-runs.json").read_text(encoding="utf-8"))["check_runs"]
+          successful = {run["name"] for run in check_runs if run["conclusion"] == "success"}
+          missing = sorted(required_checks - successful)
+          if missing:
+              raise SystemExit(f"tagged commit lacks successful required checks: {missing}")
+          PY
+
   build:
     name: Build and attest
     if: github.repository == 'Dhi13man/harness-evals'
+    needs: authorize
     permissions:
       attestations: write
       contents: read
