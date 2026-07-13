@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import os
@@ -13,6 +14,8 @@ import tarfile
 import tempfile
 import zipfile
 from dataclasses import dataclass
+from email import policy
+from email.parser import BytesParser
 from pathlib import Path, PurePosixPath
 
 
@@ -90,9 +93,45 @@ def _declared_package_resources(profile_path: str, profile_bytes: bytes) -> set[
     return declared
 
 
+def _metadata_version(raw: bytes, label: str) -> str:
+    version = BytesParser(policy=policy.default).parsebytes(raw).get("Version")
+    if not isinstance(version, str) or not version:
+        raise RuntimeError(f"{label} has no package version")
+    return version
+
+
+def _module_version(raw: bytes, label: str) -> str:
+    module = ast.parse(raw.decode("utf-8"), filename=label)
+    versions = [
+        node.value.value
+        for node in module.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "__version__"
+            for target in node.targets
+        )
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+    ]
+    if len(versions) != 1:
+        raise RuntimeError(f"{label} must declare exactly one string __version__")
+    return versions[0]
+
+
 def _inspect_distributions(wheel: Path, sdist: Path) -> None:
     with zipfile.ZipFile(wheel) as archive:
         wheel_files = set(archive.namelist())
+        wheel_metadata = [
+            path for path in wheel_files if path.endswith(".dist-info/METADATA")
+        ]
+        if len(wheel_metadata) != 1:
+            raise RuntimeError("wheel must contain exactly one METADATA file")
+        wheel_version = _metadata_version(
+            archive.read(wheel_metadata[0]), "wheel METADATA"
+        )
+        wheel_module_version = _module_version(
+            archive.read("harness_evals/__init__.py"), "wheel harness_evals/__init__.py"
+        )
         wheel_required = set().union(
             *(
                 _declared_package_resources(path, archive.read(path))
@@ -112,6 +151,18 @@ def _inspect_distributions(wheel: Path, sdist: Path) -> None:
             for member in archive.getmembers()
             if member.isfile() and "/" in member.name
         }
+        metadata_member = normalized_sdist_files.get("PKG-INFO")
+        module_member = normalized_sdist_files.get("harness_evals/__init__.py")
+        if metadata_member is None or module_member is None:
+            raise RuntimeError("sdist omitted package version sources")
+        metadata_reader = archive.extractfile(metadata_member)
+        module_reader = archive.extractfile(module_member)
+        if metadata_reader is None or module_reader is None:
+            raise RuntimeError("sdist package version sources are not regular files")
+        sdist_version = _metadata_version(metadata_reader.read(), "sdist PKG-INFO")
+        sdist_module_version = _module_version(
+            module_reader.read(), "sdist harness_evals/__init__.py"
+        )
         sdist_required: set[str] = {AUTHORITY_PATH}
         for profile_path in PROFILE_LAYOUTS:
             profile_member = normalized_sdist_files.get(profile_path)
@@ -141,6 +192,11 @@ def _inspect_distributions(wheel: Path, sdist: Path) -> None:
         raise RuntimeError("wheel and sdist declare different profile resources")
     if wheel_resource_bytes != sdist_resource_bytes:
         raise RuntimeError("wheel and sdist profile resource bytes differ")
+    if (
+        len({wheel_version, wheel_module_version, sdist_version, sdist_module_version})
+        != 1
+    ):
+        raise RuntimeError("wheel and sdist package versions differ")
 
     for label, files, required in (
         ("wheel", wheel_files, wheel_required),

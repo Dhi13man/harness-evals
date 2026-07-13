@@ -1,0 +1,217 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    name: Authorize release identity
+    if: github.repository == 'Dhi13man/harness-evals'
+    permissions:
+      checks: read
+      contents: read
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Validate protected release identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag_type="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq .object.type)"
+          tag_object="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq .object.sha)"
+          test "$tag_type" = tag
+          tag_target_type="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object" --jq .object.type)"
+          tag_commit="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object" --jq .object.sha)"
+          main_commit="$(gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq .commit.sha)"
+          test "$tag_target_type" = commit
+          test "$tag_commit" = "$main_commit"
+          gh api "repos/$GITHUB_REPOSITORY/commits/$tag_commit/check-runs?per_page=100" > /tmp/check-runs.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          required_checks = {
+              "Analyze Python",
+              "Calibration / software",
+              "Calibration / testing",
+              "Fuzz / final JSON",
+              "Package",
+              "Quality",
+              "Unit / Python 3.11",
+              "Unit / Python 3.12",
+          }
+          check_runs = json.loads(Path("/tmp/check-runs.json").read_text(encoding="utf-8"))["check_runs"]
+          successful = {run["name"] for run in check_runs if run["conclusion"] == "success"}
+          missing = sorted(required_checks - successful)
+          if missing:
+              raise SystemExit(f"tagged commit lacks successful required checks: {missing}")
+          PY
+
+  build:
+    name: Build and attest
+    if: github.repository == 'Dhi13man/harness-evals'
+    needs: authorize
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Validate package identity
+        run: |
+          python - <<'PY'
+          import ast
+          import os
+          import tomllib
+          from pathlib import Path
+
+          project_version = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+          module = ast.parse(Path("harness_evals/__init__.py").read_text(encoding="utf-8"))
+          module_versions = [
+              node.value.value
+              for node in module.body
+              if isinstance(node, ast.Assign)
+              and any(isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets)
+              and isinstance(node.value, ast.Constant)
+              and isinstance(node.value.value, str)
+          ]
+          if module_versions != [project_version]:
+              raise SystemExit("package metadata and module versions differ")
+          if os.environ["GITHUB_REF_NAME"] != f"v{project_version}":
+              raise SystemExit("tag and package versions differ")
+          PY
+      - name: Install build tools
+        run: >-
+          python -m pip install --require-hashes --only-binary=:all: -r requirements/build.txt
+      - name: Build and inspect distributions
+        run: |
+          python -m build --no-isolation
+          python -m twine check dist/*
+          python tests/run_installed_package_smoke.py --wheel dist/*.whl --sdist dist/*.tar.gz
+          (cd dist && sha256sum * > ../SHA256SUMS)
+      - name: Attest release provenance
+        id: attest
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-checksums: SHA256SUMS
+      - name: Prepare release notes and provenance bundle
+        env:
+          ATTESTATION_BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          mkdir release-assets
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          version = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+          lines = Path("CHANGELOG.md").read_text(encoding="utf-8").splitlines()
+          start = next((index for index, line in enumerate(lines) if line.startswith(f"## [{version}] - ")), None)
+          if start is None:
+              raise SystemExit(f"CHANGELOG.md has no {version} release section")
+          end = next((index for index in range(start + 1, len(lines)) if lines[index].startswith("## [")), len(lines))
+          notes = "\n".join(lines[start + 1 : end]).strip()
+          if not notes:
+              raise SystemExit(f"CHANGELOG.md has an empty {version} release section")
+          Path("release-assets/release-notes.md").write_text(notes + "\n", encoding="utf-8")
+          PY
+          cp dist/* SHA256SUMS release-assets/
+          cp "$ATTESTATION_BUNDLE" "release-assets/harness_evals-${GITHUB_REF_NAME#v}.sigstore.json"
+      - name: Upload release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-assets-${{ github.sha }}
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    permissions:
+      checks: read
+      contents: write
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Download same-run release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-assets-${{ github.sha }}
+          path: release-assets
+      - name: Validate protected release identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag_type="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq .object.type)"
+          tag_object="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq .object.sha)"
+          test "$tag_type" = tag
+          tag_target_type="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object" --jq .object.type)"
+          tag_commit="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object" --jq .object.sha)"
+          main_commit="$(gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq .commit.sha)"
+          test "$tag_target_type" = commit
+          test "$tag_commit" = "$main_commit"
+          gh api "repos/$GITHUB_REPOSITORY/commits/$tag_commit/check-runs?per_page=100" > /tmp/check-runs.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          required_checks = {
+              "Analyze Python",
+              "Calibration / software",
+              "Calibration / testing",
+              "Fuzz / final JSON",
+              "Package",
+              "Quality",
+              "Unit / Python 3.11",
+              "Unit / Python 3.12",
+          }
+          check_runs = json.loads(Path("/tmp/check-runs.json").read_text(encoding="utf-8"))["check_runs"]
+          successful = {run["name"] for run in check_runs if run["conclusion"] == "success"}
+          missing = sorted(required_checks - successful)
+          if missing:
+              raise SystemExit(f"tagged commit lacks successful required checks: {missing}")
+          PY
+      - name: Verify release assets
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          expected="$(printf '%s\n' \
+            SHA256SUMS \
+            "harness_evals-$version-py3-none-any.whl" \
+            "harness_evals-$version.sigstore.json" \
+            "harness_evals-$version.tar.gz" \
+            release-notes.md | sort)"
+          observed="$(find release-assets -maxdepth 1 -type f -printf '%f\n' | sort)"
+          test "$observed" = "$expected"
+          (cd release-assets && sha256sum --check SHA256SUMS)
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" \
+            "release-assets/harness_evals-$version-py3-none-any.whl" \
+            "release-assets/harness_evals-$version.tar.gz" \
+            release-assets/SHA256SUMS \
+            "release-assets/harness_evals-$version.sigstore.json" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Harness Evals $version" \
+            --notes-file release-assets/release-notes.md \
+            --verify-tag

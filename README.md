@@ -6,7 +6,7 @@ Harness Evals is an open source system for running reproducible A/B evaluations 
 
 A suite defines its own skill identifiers, bundle locations, tasks, fixtures, verifier resources, and comparison arms. The included engineering and testing tracks are the first reference corpus, not the evaluator's domain boundary; suites may target any configured instruction bundle with cases that exercise its observable behavior. Harness integrations live behind provider adapters.
 
-Version `0.2.0` is an alpha release for expert evaluation work on Linux. The public corpus contains train and validation cases, not a private holdout, and the repository does not ship live comparator certification evidence or claim that one harness or bundle is superior. The production-authority blinded comparator is calibrated for software-change evidence. A test-authority plain-language profile proves that non-engineering semantics can use the shared engine, but its corpus is an author-authored fixture rather than independent production calibration. Other domains should use objective case verifiers or contribute a separately calibrated comparator profile rather than reusing either rubric without validation.
+Version `0.3.0` is an alpha release for expert evaluation work on Linux. The public corpus contains train and validation cases, not a private holdout, and the repository does not ship live comparator certification evidence or claim that one harness or bundle is superior. The production-authority blinded comparator is calibrated for software-change evidence. A test-authority plain-language profile proves that non-engineering semantics can use the shared engine, but its corpus is an author-authored fixture rather than independent production calibration. Other domains should use objective case verifiers or contribute a separately calibrated comparator profile rather than reusing either rubric without validation.
 
 ## What Is Included
 
@@ -43,9 +43,21 @@ The runner treats prompts, fixtures, generated code, provider output, and compar
 - Git, Go, and Node.js for the included language fixtures.
 - An authenticated supported provider executable only for provider-backed runs.
 
-The runtime package has no third-party Python dependencies. Development and CI tools are separate.
+The runtime package has one exact third-party Python dependency for RFC 8785 JSON canonicalization. Development, test, build, and fuzz tools are separately hash-locked for CI.
 
 ## Quick Start
+
+Install and verify the published 0.3.0 wheel with a GitHub CLI release that provides `gh attestation`:
+
+```bash
+mkdir -p /tmp/harness-evals-0.3.0
+gh release download v0.3.0 --repo Dhi13man/harness-evals --pattern "harness_evals-0.3.0*" --pattern SHA256SUMS --dir /tmp/harness-evals-0.3.0
+(cd /tmp/harness-evals-0.3.0 && sha256sum --check SHA256SUMS)
+gh attestation verify /tmp/harness-evals-0.3.0/harness_evals-0.3.0-py3-none-any.whl --repo Dhi13man/harness-evals
+python -m pip install /tmp/harness-evals-0.3.0/harness_evals-0.3.0-py3-none-any.whl
+```
+
+For source development:
 
 ```bash
 git clone https://github.com/Dhi13man/harness-evals.git
@@ -232,8 +244,8 @@ Every non-dry holdout attempt consumes its plan before any agent or comparator c
 
 The Python package follows Semantic Versioning. Before `1.0.0`, minor versions may change the Python API or CLI with changelog and migration notes. Manifest schema versions, corpus versions, comparator protocol versions, and release-lock versions are independent compatibility surfaces and are never inferred from the package version.
 
-- Package and CLI: `0.2.0`
-- Suite manifest schemas: `2`, `3`, and `4` compatibility, `5` current
+- Package and CLI: `0.3.0`
+- Suite manifest schemas: `2` through `6` compatibility, `7` current
 - Included suite: `harness-evals-software-engineering-v1`
 - Comparator evaluator: `2.3.0`
 

@@ -86,6 +86,12 @@ def normalize_artifact(kind: str, raw: str | bytes) -> NormalizedArtifact:
             canonical = rfc8785.dumps(value)
         except (rfc8785.CanonicalizationError, RecursionError) as exc:
             raise ArtifactError(f"final JSON cannot be canonicalized: {exc}") from exc
+        try:
+            repeated = rfc8785.dumps(_parse_bounded_json(canonical))
+        except (ArtifactError, rfc8785.CanonicalizationError, RecursionError) as exc:
+            raise ArtifactError("final JSON canonical form is not stable") from exc
+        if repeated != canonical:
+            raise ArtifactError("final JSON canonical form is not idempotent")
         return _artifact(
             kind=kind,
             media_type="application/json",
