@@ -44,6 +44,11 @@ class ArtifactNormalizationTests(unittest.TestCase):
         with self.assertRaisesRegex(ArtifactError, "raw size limit"):
             normalize_artifact("final_output_text", "x" * (MAX_ARTIFACT_BYTES + 1))
 
+    def test_json_normalization_rejects_an_unstable_canonical_number(self) -> None:
+        unstable = '{"a":33333333333333333.3333313331,"b":[true,false]}'
+        with self.assertRaisesRegex(ArtifactError, "canonical form is not stable"):
+            normalize_artifact("final_output_json", unstable)
+
     def test_malformed_and_structurally_unsafe_outputs_are_rejected(self) -> None:
         too_deep = "[" * 65 + "0" + "]" * 65
         too_many_members = "[" + ",".join("0" for _ in range(10_001)) + "]"

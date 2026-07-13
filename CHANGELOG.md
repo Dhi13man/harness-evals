@@ -42,7 +42,7 @@ All notable changes to Harness Evals are documented in this file. The format fol
 - Added literal Git path handling, bounded source enumeration, Git/worktree snapshot parity, runtime shared-path revalidation, verifier-only source separation, and read-only configured shared mounts.
 - Added domain-separated source fingerprints over bundle locators, paths, bytes, executable modes, and context files; equal evaluated arms, source drift, mode confusion, and authority substitution fail before dispatch.
 - Bound production provider authority to reviewed capability, configuration, runtime provenance, executable identity, and non-injected provider instances; drift and instance substitution fail before dispatch or release.
-- Reject malformed output before verification or judgment, reject uncalibrated judged artifact kinds before dispatch, and isolate final-output verification from candidate workspace mutations.
+- Reject malformed or non-idempotent canonical output before verification or judgment, reject uncalibrated judged artifact kinds before dispatch, and isolate final-output verification from candidate workspace mutations.
 - Pin every Python CI dependency by cryptographic hash, validate all release distributions with Twine, and attach signed build provenance to release artifacts.
 
 ## [0.2.0] - 2026-07-12
