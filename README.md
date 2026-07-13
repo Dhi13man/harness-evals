@@ -82,15 +82,46 @@ The root [suite.json](suite.json) is a complete repository-local reference suite
 
 | Component | Purpose |
 | --- | --- |
+| `evaluation_mode` | Selects comparator-judged or objective-verifier-only evaluation in schema v3. |
 | `provider` | Generates a change in an isolated fixture workspace. |
 | `comparator` | Judges eligible pairs using the locked blinded protocol. |
+| `comparator_profile` | Selects the versioned comparator contract and resources for schema-v3 judged suites. |
 | `variants` | Bind absent, immutable Git-ref, or committed-worktree instruction bundles. |
 | `comparisons` | Define control/treatment roles, exactly three repetitions, and AB/BA order. |
-| `cases` | Bind a prompt, fixture, verifier, bundle ID, explicit context, expectations, and comparator contract. |
+| `cases` | Bind a prompt, fixture, verifier, bundle ID, explicit context, expectations, and, for judged suites, a comparator contract. |
 
 The executable parser in [harness_evals/manifest.py](harness_evals/manifest.py) is authoritative. [suite.schema.json](suite.schema.json) is the editor and interoperability contract; changes must keep both in exact behavioral parity.
 
 To evaluate bundles in another repository, copy the manifest, set `repository_root`, point worktree variants at that repository, replace Git refs with commits reachable there, and update every case's bundle ID and explicit context files. Do not move a baseline by editing only the manifest: `baseline-authority.json`, comparator runtime bindings, and any sealed holdout plan must be regenerated and reviewed together.
+
+### Evaluation Modes
+
+Schema v2 remains supported without changing existing manifest bytes, manifest hashes, or result field shapes and selects the current software comparator through its compatibility path. Comparator release and certification hashes still change when their locked code or resources change. Schema v3 requires an explicit `evaluation_mode`.
+
+- `judged` requires both `comparator` and `comparator_profile`, and every case requires `comparator_contract`.
+- `objective_only` forbids `comparator`, `comparator_profile`, and every case-level `comparator_contract`. The runner constructs no comparator provider or runtime, creates no comparator spend ledger, selects the sole verifier-passing arm, and records equal verifier outcomes as `tie` under `verifier-pass-v1`.
+
+Objective-only schema-v3 execution is diagnostic until a later manifest version moves production source authority out of the comparator release. It cannot prepare or consume a holdout plan or authorize a release.
+
+### Comparator Profiles
+
+A judged schema-v3 suite selects either a registered built-in profile or a contained suite-local data profile:
+
+```json
+{
+  "evaluation_mode": "judged",
+  "comparator_profile": {
+    "kind": "builtin",
+    "id": "software-engineering-v2.3"
+  }
+}
+```
+
+Built-in profiles resolve from installed package resources through a code-owned registry. The registry binds the exact descriptor, production and test releases, and certification contract. Wheel and sdist CI inspects every descriptor-declared resource, compares their bytes, rejects unexpected profile data, installs the wheel in a clean environment, and dry-runs an external suite through the installed CLI without importing the checkout.
+
+A suite-local profile uses `{"kind": "suite_local", "path": "profiles/example"}`. Its path must be canonical, contained, and free of symlinks. Its descriptor may declare only data resources; calibration, collection, certification, and comparison code always come from the installed package. A suite-local profile cannot reuse a built-in ID, claim registry authority, prepare or consume a holdout, or authorize a release, even when all of its internal hashes and certification evidence are self-consistent.
+
+Packaged built-in profiles preserve the legacy certification location at `harness_evals/comparator_calibration/evidence/` when that checkout layout exists. An external installed-package suite uses `comparator-evidence/<profile-id>/certification.json`; the certification's `evidence_path` is relative to that same profile-specific directory. Certification and evidence files are enforced as owner-only regular files. Their existing non-symlink parent directory should be mode `0700`; directory permissions remain the suite operator's responsibility.
 
 ## Adding A Case
 
@@ -125,7 +156,7 @@ Every non-dry holdout attempt consumes its plan before any agent or comparator c
 The Python package follows Semantic Versioning. Before `1.0.0`, minor versions may change the Python API or CLI with changelog and migration notes. Manifest schema versions, corpus versions, comparator protocol versions, and release-lock versions are independent compatibility surfaces and are never inferred from the package version.
 
 - Package and CLI: `0.2.0`
-- Suite manifest schema: `2`
+- Suite manifest schemas: `2` compatibility, `3` current
 - Included suite: `harness-evals-software-engineering-v1`
 - Comparator evaluator: `2.3.0`
 

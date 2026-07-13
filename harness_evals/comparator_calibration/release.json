@@ -3,6 +3,7 @@
   "release_id": "software-engineering-comparator-reference-cli-v2.3",
   "test_release": false,
   "artifacts": {
+    "profile_descriptor_sha256": "7a0623b3da29e9eb1f15b94020b079fb9e61454023ea29660d58eb40acc10941",
     "corpus_sha256": "aa1f0e16c8025d5489bcbae0774ea8e7de52d50bf0aec9073d3810f53960385b",
     "manifest_schema_sha256": "3f2394a55e64e7db173e675ad3848ad03c8800890761c99f0ee07fc8c869a048",
     "rubric_sha256": "32eed2046b37396da8e535352b9509f0f59b5d2494d44d105b89c18631dd24e3",
@@ -20,7 +21,7 @@
   },
   "evaluator": {
     "version": "2.3.0",
-    "source_sha256": "8fc67e5193e64bb7ff615b30272a0c13b6875d3619b470974711b7a849e64d58",
+    "source_sha256": "88a0289b27018df8a5797ded21552ecdf74d60bd151ab65b7a24e838aa011255",
     "collector_source_sha256": "c601c330d7309090d980609a21d97a98ba49bcaa34831619eff14fc8dc3da8e4",
     "certifier_source_sha256": "5149f0ecb4a8e0588758cf98325c98b6060979a27fec6aeb95dcb22a07f52746"
   },
@@ -175,10 +176,11 @@
   },
   "runtime_adapter": {
     "id": "shared-harness-claude-cli-v1",
-    "source_sha256": "500c850517403bf1d4e8bd18695f7cc06bc3125b22930080d68107ace30cd380",
-    "harness_runner_source_sha256": "35b0a59dad82ad74940063bcf636001d634f48eee113ef16942f14e140e93b64",
+    "source_sha256": "4b21b1409f5a1dcab3f01cac4cfcb2d7174f11c78e1b4fa6afc33ceec45011f4",
+    "harness_runner_source_sha256": "5d496e9213e9bfa0add2e14fd15e08ccf5e3a0eeac7c52ad7d7bd89ddd51e342",
     "provider_source_sha256": "5b899ff776fb4c60699b6da68df7c0273254cc5b647c1812c256a7b4876dd74a",
-    "harness_manifest_source_sha256": "78b363fc56379eff29487364c08b09d7dd3c6adccc0f18712554c3eb027507ee",
+    "profile_registry_source_sha256": "524fc3be328fa8efc47b5bc5e3d8c6620effa528d62d72ac1a592b2e72cc6018",
+    "harness_manifest_source_sha256": "5b7c4ab394ca7523ace658a4bd607dc3fdd6fcea5b11332538aab4ba062cfc49",
     "harness_package_source_sha256": "746345b5d89221946749913b036a1d3fd26bf203656546512dacb6080e831e9a",
     "run_evals_source_sha256": "bb9d15adae63f5cedbb5f972ac1b38a0e0524b89651e73713fa8d606f26803f8",
     "holdout_plan_source_sha256": "4272443f23f3ae5540c5833084c0b0a543f7ffe789c9c0d86fcfa26209f5a705",

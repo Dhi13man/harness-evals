@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "software-engineering-v2.3",
+  "version": "2.3.0",
+  "engine_contract": "software-change-comparator-v2.3",
+  "resources": {
+    "calibration_engine": "calibration.py",
+    "collector": "collect.py",
+    "certifier": "certify.py",
+    "manifest": "manifest.json",
+    "manifest_schema": "manifest.schema.json",
+    "rubric": "rubric.json",
+    "request_template": "request-template.json",
+    "response_schema": "response.schema.json",
+    "evidence_schema": "evidence.schema.json",
+    "production_release": "release.json",
+    "test_release": "tests/test-release.json"
+  },
+  "supported_artifact_kinds": [
+    "workspace_diff"
+  ]
+}

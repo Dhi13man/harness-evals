@@ -12,6 +12,14 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from .comparator_profiles import (
+    BUILTIN_SOFTWARE_PROFILE_ID,
+    ComparatorProfileError,
+    ComparatorProfileResources,
+    resolve_builtin_profile,
+    resolve_profile_directory,
+)
+
 
 IDENTIFIER_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 SKILL_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
@@ -77,7 +85,15 @@ class CaseSpec:
     context_files: tuple[PurePosixPath, ...]
     timeout_seconds: int
     critical_expectations: tuple[str, ...]
-    comparator_contract: dict[str, Any]
+    comparator_contract: dict[str, Any] | None
+
+
+@dataclass(frozen=True)
+class ComparatorProfileSpec:
+    kind: str
+    id: str
+    root: Path | None
+    resources: ComparatorProfileResources | None
 
 
 @dataclass(frozen=True)
@@ -88,8 +104,10 @@ class SuiteSpec:
     schema_version: int
     suite_id: str
     seed: int
+    evaluation_mode: str
     provider: ProviderConfig
-    comparator: ProviderConfig
+    comparator: ProviderConfig | None
+    comparator_profile: ComparatorProfileSpec | None
     variants: tuple[VariantSpec, ...]
     comparisons: tuple[ComparisonSpec, ...]
     cases: tuple[CaseSpec, ...]
@@ -276,6 +294,87 @@ def _suite_protocol_lock(root: Path, value: Any, location: str) -> Path:
     if normalized != raw or raw.startswith("/") or ".." in PurePosixPath(raw).parts:
         raise ManifestError(f"{location} must be a canonical suite-relative POSIX path")
     return _suite_path(root, raw, location, kind="file")
+
+
+def _suite_profile_directory(root: Path, value: Any, location: str) -> Path:
+    raw = _string(value, location)
+    path = PurePosixPath(raw)
+    if (
+        path.is_absolute()
+        or path == PurePosixPath(".")
+        or ".." in path.parts
+        or path.as_posix() != raw
+        or raw.startswith("./")
+    ):
+        raise ManifestError(f"{location} must be a canonical suite-relative path")
+    logical = root
+    try:
+        for part in path.parts:
+            logical = logical / part
+            if logical.is_symlink():
+                raise ManifestError(f"{location} must not traverse a symlink")
+        resolved = logical.resolve(strict=True)
+    except OSError as exc:
+        raise ManifestError(f"cannot resolve {location}: {exc}") from exc
+    if not resolved.is_relative_to(root) or not resolved.is_dir():
+        raise ManifestError(f"{location} must name a contained directory")
+    return resolved
+
+
+def _parse_comparator_profile(raw: Any, suite_root: Path) -> ComparatorProfileSpec:
+    data = _object(
+        raw,
+        "comparator_profile",
+        required={"kind"},
+        allowed={"kind", "id", "path"},
+    )
+    kind = _string(data["kind"], "comparator_profile.kind")
+    try:
+        if kind == "builtin":
+            exact = _object(
+                data,
+                "comparator_profile",
+                required={"kind", "id"},
+                allowed={"kind", "id"},
+            )
+            profile_id = _string(exact["id"], "comparator_profile.id")
+            if profile_id != BUILTIN_SOFTWARE_PROFILE_ID:
+                raise ManifestError(
+                    f"unknown built-in comparator profile: {profile_id}"
+                )
+            resources = resolve_builtin_profile(profile_id)
+            return ComparatorProfileSpec(
+                kind="builtin",
+                id=profile_id,
+                root=None,
+                resources=resources,
+            )
+        if kind == "suite_local":
+            exact = _object(
+                data,
+                "comparator_profile",
+                required={"kind", "path"},
+                allowed={"kind", "path"},
+            )
+            profile_root = _suite_profile_directory(
+                suite_root,
+                exact["path"],
+                "comparator_profile.path",
+            )
+            resources = resolve_profile_directory(profile_root)
+            if resources.descriptor.id == BUILTIN_SOFTWARE_PROFILE_ID:
+                raise ManifestError(
+                    "suite-local comparator profile must not shadow a built-in id"
+                )
+            return ComparatorProfileSpec(
+                kind="suite_local",
+                id=resources.descriptor.id,
+                root=profile_root,
+                resources=resources,
+            )
+    except ComparatorProfileError as exc:
+        raise ManifestError(f"invalid comparator profile: {exc}") from exc
+    raise ManifestError("comparator_profile.kind must be 'builtin' or 'suite_local'")
 
 
 def _root_path(root: Path, value: Any, location: str) -> Path:
@@ -506,7 +605,9 @@ def _parse_comparisons(raw: Any, variant_ids: set[str]) -> tuple[ComparisonSpec,
     return tuple(comparisons)
 
 
-def _parse_cases(raw: Any, suite_root: Path) -> tuple[CaseSpec, ...]:
+def _parse_cases(
+    raw: Any, suite_root: Path, *, require_comparator_contract: bool
+) -> tuple[CaseSpec, ...]:
     items = _list(raw, "cases", minimum=1)
     cases: list[CaseSpec] = []
     case_fields = {
@@ -521,10 +622,21 @@ def _parse_cases(raw: Any, suite_root: Path) -> tuple[CaseSpec, ...]:
         "critical_expectations",
         "comparator_contract",
     }
+    required_case_fields = (
+        case_fields
+        if require_comparator_contract
+        else case_fields - {"comparator_contract"}
+    )
+    allowed_case_fields = required_case_fields
     verifier_fields = {"argv", "timeout_seconds", "required_tools"}
     for index, item in enumerate(items):
         location = f"cases[{index}]"
-        data = _object(item, location, required=case_fields, allowed=case_fields)
+        data = _object(
+            item,
+            location,
+            required=required_case_fields,
+            allowed=allowed_case_fields,
+        )
         split = _string(data["split"], f"{location}.split")
         if split not in {"train", "validation", "holdout"}:
             raise ManifestError(
@@ -616,8 +728,12 @@ def _parse_cases(raw: Any, suite_root: Path) -> tuple[CaseSpec, ...]:
                     maximum=MAX_TIMEOUT_SECONDS,
                 ),
                 critical_expectations=critical,
-                comparator_contract=_parse_comparator_contract(
-                    data["comparator_contract"], f"{location}.comparator_contract"
+                comparator_contract=(
+                    _parse_comparator_contract(
+                        data["comparator_contract"], f"{location}.comparator_contract"
+                    )
+                    if require_comparator_contract
+                    else None
                 ),
             )
         )
@@ -742,28 +858,75 @@ def load_suite(path: str | Path) -> SuiteSpec:
         raise ManifestError(f"suite manifest must be UTF-8: {exc}") from exc
     except json.JSONDecodeError as exc:
         raise ManifestError(f"invalid suite JSON: {exc}") from exc
-    root_fields = {
+    if not isinstance(data, dict):
+        raise ManifestError("suite must be an object")
+    schema_version = _integer(
+        data.get("schema_version"), "schema_version", minimum=2, maximum=3
+    )
+    common_fields = {
         "$schema",
         "schema_version",
         "suite_id",
         "seed",
         "repository_root",
         "provider",
-        "comparator",
         "variants",
         "comparisons",
         "cases",
     }
-    required = root_fields - {"$schema"}
-    root = _object(data, "suite", required=required, allowed=root_fields)
-    schema_version = _integer(
-        root["schema_version"], "schema_version", minimum=2, maximum=2
-    )
+    if schema_version == 2:
+        root_fields = common_fields | {"comparator"}
+        root = _object(
+            data,
+            "suite",
+            required=root_fields - {"$schema"},
+            allowed=root_fields,
+        )
+        evaluation_mode = "judged"
+        comparator_profile = ComparatorProfileSpec(
+            kind="builtin",
+            id=BUILTIN_SOFTWARE_PROFILE_ID,
+            root=None,
+            resources=None,
+        )
+    else:
+        root_fields = common_fields | {
+            "evaluation_mode",
+            "comparator",
+            "comparator_profile",
+        }
+        if not isinstance(data.get("evaluation_mode"), str):
+            raise ManifestError("evaluation_mode must be a string")
+        evaluation_mode = data["evaluation_mode"]
+        if evaluation_mode == "judged":
+            required = common_fields | {
+                "evaluation_mode",
+                "comparator",
+                "comparator_profile",
+            }
+        elif evaluation_mode == "objective_only":
+            required = common_fields | {"evaluation_mode"}
+            root_fields = required
+        else:
+            raise ManifestError("evaluation_mode must be 'judged' or 'objective_only'")
+        root = _object(
+            data,
+            "suite",
+            required=required - {"$schema"},
+            allowed=root_fields,
+        )
+        comparator_profile = (
+            _parse_comparator_profile(root["comparator_profile"], manifest_path.parent)
+            if evaluation_mode == "judged"
+            else None
+        )
     suite_root = manifest_path.parent
     repository_root = _root_path(suite_root, root["repository_root"], "repository_root")
     provider = _parse_provider(root["provider"], "provider", suite_root)
-    comparator = _parse_provider(
-        root["comparator"], "comparator", suite_root, allow_codex=False
+    comparator = (
+        _parse_provider(root["comparator"], "comparator", suite_root, allow_codex=False)
+        if evaluation_mode == "judged"
+        else None
     )
     if "$schema" in root:
         _string(root["$schema"], "$schema")
@@ -771,7 +934,11 @@ def load_suite(path: str | Path) -> SuiteSpec:
     comparisons = _parse_comparisons(
         root["comparisons"], {variant.id for variant in variants}
     )
-    cases = _parse_cases(root["cases"], suite_root)
+    cases = _parse_cases(
+        root["cases"],
+        suite_root,
+        require_comparator_contract=evaluation_mode == "judged",
+    )
     return SuiteSpec(
         path=manifest_path,
         root=suite_root,
@@ -779,8 +946,10 @@ def load_suite(path: str | Path) -> SuiteSpec:
         schema_version=schema_version,
         suite_id=_string(root["suite_id"], "suite_id", pattern=IDENTIFIER_RE),
         seed=_integer(root["seed"], "seed", minimum=0),
+        evaluation_mode=evaluation_mode,
         provider=provider,
         comparator=comparator,
+        comparator_profile=comparator_profile,
         variants=variants,
         comparisons=comparisons,
         cases=cases,

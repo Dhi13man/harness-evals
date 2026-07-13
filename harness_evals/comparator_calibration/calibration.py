@@ -1273,7 +1273,12 @@ def criterion_support(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return support
 
 
-def validate_release(bundle: Bundle) -> dict[str, Any]:
+def _validate_release(
+    bundle: Bundle,
+    *,
+    validate_external_bindings: bool = True,
+    evaluator_root: Path | None = None,
+) -> dict[str, Any]:
     """Verify the trusted release lock against current canonical artifacts."""
 
     validate_rubric(bundle.rubric)
@@ -1305,6 +1310,7 @@ def validate_release(bundle: Bundle) -> dict[str, Any]:
     artifacts = _exact(
         release["artifacts"],
         {
+            "profile_descriptor_sha256",
             "corpus_sha256",
             "manifest_schema_sha256",
             "rubric_sha256",
@@ -1323,10 +1329,8 @@ def validate_release(bundle: Bundle) -> dict[str, Any]:
         "release.artifacts",
     )
     reviews = review_artifact_hashes(bundle.manifest)
-    project_root = bundle.root.parents[1]
-    holdout_plan_schema_path = project_root / "holdout-plan.schema.json"
-    holdout_plan_schema = load_json(holdout_plan_schema_path)
     actual_hashes = {
+        "profile_descriptor_sha256": file_sha256(bundle.root / "profile.json"),
         "corpus_sha256": canonical_sha256(bundle.manifest),
         "manifest_schema_sha256": canonical_sha256(bundle.manifest_schema),
         "rubric_sha256": canonical_sha256(bundle.rubric),
@@ -1336,15 +1340,35 @@ def validate_release(bundle: Bundle) -> dict[str, Any]:
         ).hexdigest(),
         "response_schema_sha256": canonical_sha256(bundle.response_schema),
         "evidence_schema_sha256": canonical_sha256(bundle.evidence_schema),
-        "holdout_plan_schema_sha256": canonical_sha256(holdout_plan_schema),
-        "holdout_plan_schema_bytes_sha256": file_sha256(holdout_plan_schema_path),
         "reviewer_a_sha256": reviews["reviewer_a"],
         "reviewer_b_sha256": reviews["reviewer_b"],
         "re_review_sha256": reviews["re_review"],
         "resolution_sha256": reviews["resolution"],
         "scoring_gold_sha256": reviews["scoring_gold"],
     }
-    if artifacts != actual_hashes:
+    external_artifact_fields = {
+        "holdout_plan_schema_sha256",
+        "holdout_plan_schema_bytes_sha256",
+    }
+    if validate_external_bindings:
+        project_root = bundle.root.parents[1]
+        holdout_plan_schema_path = project_root / "holdout-plan.schema.json"
+        holdout_plan_schema = load_json(holdout_plan_schema_path)
+        actual_hashes.update(
+            {
+                "holdout_plan_schema_sha256": canonical_sha256(holdout_plan_schema),
+                "holdout_plan_schema_bytes_sha256": file_sha256(
+                    holdout_plan_schema_path
+                ),
+            }
+        )
+    elif any(
+        not isinstance(artifacts[field], str)
+        or HASH_RE.fullmatch(artifacts[field]) is None
+        for field in external_artifact_fields
+    ):
+        raise CalibrationError("release external artifact hash is invalid")
+    if any(artifacts[field] != digest for field, digest in actual_hashes.items()):
         raise CalibrationError("release artifact lock is stale or mismatched")
     evaluator = _exact(
         release["evaluator"],
@@ -1358,11 +1382,18 @@ def validate_release(bundle: Bundle) -> dict[str, Any]:
     )
     if evaluator["version"] != EVALUATOR_VERSION:
         raise CalibrationError("release evaluator version is stale")
-    if evaluator["source_sha256"] != file_sha256(bundle.root / "calibration.py"):
+    evaluator_source_root = bundle.root if evaluator_root is None else evaluator_root
+    if evaluator["source_sha256"] != file_sha256(
+        evaluator_source_root / "calibration.py"
+    ):
         raise CalibrationError("release evaluator source hash is stale")
-    if evaluator["collector_source_sha256"] != file_sha256(bundle.root / "collect.py"):
+    if evaluator["collector_source_sha256"] != file_sha256(
+        evaluator_source_root / "collect.py"
+    ):
         raise CalibrationError("release collector source hash is stale")
-    if evaluator["certifier_source_sha256"] != file_sha256(bundle.root / "certify.py"):
+    if evaluator["certifier_source_sha256"] != file_sha256(
+        evaluator_source_root / "certify.py"
+    ):
         raise CalibrationError("release certifier source hash is stale")
     judge = _exact(
         release["judge"],
@@ -1500,6 +1531,7 @@ def validate_release(bundle: Bundle) -> dict[str, Any]:
             "source_sha256",
             "harness_runner_source_sha256",
             "provider_source_sha256",
+            "profile_registry_source_sha256",
             "harness_manifest_source_sha256",
             "harness_package_source_sha256",
             "run_evals_source_sha256",
@@ -1521,33 +1553,55 @@ def validate_release(bundle: Bundle) -> dict[str, Any]:
         raise CalibrationError(
             "release frozen original commit must be 40 lowercase hexadecimal characters"
         )
-    project_root = bundle.root.parents[1]
-    authority_path = project_root / "baseline-authority.json"
-    authority_commit = require_baseline_authority(
-        project_root / "suite.json",
-        authority_path,
-    )
-    if frozen_original != authority_commit:
-        raise CalibrationError(
-            "release frozen original commit differs from baseline authority"
-        )
-    runtime_sources = {
-        "source_sha256": project_root / "harness_evals" / "comparator_runtime.py",
-        "harness_runner_source_sha256": project_root / "harness_evals" / "runner.py",
-        "provider_source_sha256": project_root / "harness_evals" / "providers.py",
-        "harness_manifest_source_sha256": project_root
-        / "harness_evals"
-        / "manifest.py",
-        "harness_package_source_sha256": project_root / "harness_evals" / "__init__.py",
-        "run_evals_source_sha256": project_root / "harness_evals" / "cli.py",
-        "holdout_plan_source_sha256": project_root
-        / "harness_evals"
-        / "holdout_plan.py",
-        "prepare_holdout_plan_source_sha256": project_root
-        / "harness_evals"
-        / "holdout_cli.py",
-        "baseline_authority_source_sha256": authority_path,
+    runtime_source_fields = {
+        "source_sha256",
+        "harness_runner_source_sha256",
+        "provider_source_sha256",
+        "profile_registry_source_sha256",
+        "harness_manifest_source_sha256",
+        "harness_package_source_sha256",
+        "run_evals_source_sha256",
+        "holdout_plan_source_sha256",
+        "prepare_holdout_plan_source_sha256",
+        "baseline_authority_source_sha256",
     }
+    if validate_external_bindings:
+        project_root = bundle.root.parents[1]
+        authority_path = project_root / "baseline-authority.json"
+        authority_commit = require_baseline_authority(
+            project_root / "suite.json",
+            authority_path,
+        )
+        if frozen_original != authority_commit:
+            raise CalibrationError(
+                "release frozen original commit differs from baseline authority"
+            )
+        runtime_sources = {
+            "source_sha256": project_root / "harness_evals" / "comparator_runtime.py",
+            "harness_runner_source_sha256": project_root
+            / "harness_evals"
+            / "runner.py",
+            "provider_source_sha256": project_root / "harness_evals" / "providers.py",
+            "profile_registry_source_sha256": project_root
+            / "harness_evals"
+            / "comparator_profiles.py",
+            "harness_manifest_source_sha256": project_root
+            / "harness_evals"
+            / "manifest.py",
+            "harness_package_source_sha256": project_root
+            / "harness_evals"
+            / "__init__.py",
+            "run_evals_source_sha256": project_root / "harness_evals" / "cli.py",
+            "holdout_plan_source_sha256": project_root
+            / "harness_evals"
+            / "holdout_plan.py",
+            "prepare_holdout_plan_source_sha256": project_root
+            / "harness_evals"
+            / "holdout_cli.py",
+            "baseline_authority_source_sha256": authority_path,
+        }
+    else:
+        runtime_sources = dict.fromkeys(runtime_source_fields)
     for field, source_path in runtime_sources.items():
         source_sha256 = runtime_adapter[field]
         if (
@@ -1555,7 +1609,7 @@ def validate_release(bundle: Bundle) -> dict[str, Any]:
             or HASH_RE.fullmatch(source_sha256) is None
         ):
             raise CalibrationError(f"release {field} source hash is invalid")
-        if source_sha256 != file_sha256(source_path):
+        if source_path is not None and source_sha256 != file_sha256(source_path):
             raise CalibrationError(f"release {field} source hash is stale")
     if not isinstance(runtime_adapter["shared_harness_compatible"], bool):
         raise CalibrationError("release runtime compatibility must be boolean")
@@ -1572,8 +1626,65 @@ def validate_release(bundle: Bundle) -> dict[str, Any]:
         "runtime_adapter": runtime_adapter,
         "criterion_support": support,
         "execution_limits": execution_limits,
-        "artifacts": actual_hashes,
+        "artifacts": dict(artifacts),
+        "external_bindings_validated": validate_external_bindings,
     }
+
+
+def validate_release(bundle: Bundle) -> dict[str, Any]:
+    """Validate profile artifacts and every checkout-bound release input."""
+
+    return _validate_release(bundle, validate_external_bindings=True)
+
+
+def validate_profile_release(
+    bundle: Bundle, *, evaluator_root: Path | None = None
+) -> dict[str, Any]:
+    """Validate an authority-bound profile while marking external inputs unchecked."""
+
+    return _validate_release(
+        bundle,
+        validate_external_bindings=False,
+        evaluator_root=evaluator_root,
+    )
+
+
+def validate_packaged_release_bindings(
+    bundle: Bundle,
+    *,
+    suite_root: Path,
+    suite_manifest_path: Path,
+    runtime_source_root: Path,
+) -> None:
+    """Bind packaged profile bytes to one suite and installed runtime source tree."""
+
+    release = bundle.release
+    runtime_adapter = release["runtime_adapter"]
+    authority_path = suite_root / "baseline-authority.json"
+    authority_commit = require_baseline_authority(
+        suite_manifest_path,
+        authority_path,
+    )
+    if runtime_adapter["frozen_original_commit"] != authority_commit:
+        raise CalibrationError(
+            "release frozen original commit differs from baseline authority"
+        )
+    runtime_sources = {
+        "source_sha256": runtime_source_root / "comparator_runtime.py",
+        "harness_runner_source_sha256": runtime_source_root / "runner.py",
+        "provider_source_sha256": runtime_source_root / "providers.py",
+        "profile_registry_source_sha256": runtime_source_root
+        / "comparator_profiles.py",
+        "harness_manifest_source_sha256": runtime_source_root / "manifest.py",
+        "harness_package_source_sha256": runtime_source_root / "__init__.py",
+        "run_evals_source_sha256": runtime_source_root / "cli.py",
+        "holdout_plan_source_sha256": runtime_source_root / "holdout_plan.py",
+        "prepare_holdout_plan_source_sha256": runtime_source_root / "holdout_cli.py",
+        "baseline_authority_source_sha256": authority_path,
+    }
+    for field, source_path in runtime_sources.items():
+        if runtime_adapter[field] != file_sha256(source_path):
+            raise CalibrationError(f"release {field} source hash is stale")
 
 
 def invocation_id(
@@ -2165,10 +2276,26 @@ def expected_trial_keys(manifest: dict[str, Any]) -> set[tuple[str, int, str]]:
     }
 
 
-def evaluate_evidence(bundle: Bundle, evidence: dict[str, Any]) -> dict[str, Any]:
+def evaluate_evidence(
+    bundle: Bundle,
+    evidence: dict[str, Any],
+    *,
+    profile_only: bool = False,
+    evaluator_root: Path | None = None,
+    external_bindings_validated: bool | None = None,
+) -> dict[str, Any]:
     """Evaluate complete offline calls; live invocation is deliberately out of scope."""
 
-    release_summary = validate_release(bundle)
+    release_summary = (
+        validate_profile_release(bundle, evaluator_root=evaluator_root)
+        if profile_only
+        else validate_release(bundle)
+    )
+    if external_bindings_validated is not None:
+        release_summary = {
+            **release_summary,
+            "external_bindings_validated": external_bindings_validated,
+        }
     manifest_summary = validate_manifest(bundle.manifest, bundle.rubric)
     _exact(
         evidence,

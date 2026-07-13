@@ -43,6 +43,7 @@ harness-evals-prepare-holdout = "harness_evals.holdout_cli:main"
 include = ["harness_evals*"]
 
 [tool.setuptools.package-data]
+"harness_evals" = ["comparator-profile-authority.json"]
 "harness_evals.comparator_calibration" = ["*.json", "README.md", "tests/*.json"]
 
 [tool.ruff]
