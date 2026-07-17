@@ -225,10 +225,11 @@ def outside_fingerprint(destination):
     return fingerprint
 
 def read_chars():
-    for line in Path("/proc/self/io").read_text(encoding="utf-8").splitlines():
+    payload = Path("/proc/self/io").read_bytes()
+    for line in payload.decode("utf-8").splitlines():
         key, separator, value = line.partition(":")
         if key == "rchar" and separator:
-            return int(value.strip())
+            return int(value.strip()), len(payload)
     raise RuntimeError("/proc/self/io did not report rchar")
 
 captured = io.StringIO()
@@ -305,7 +306,7 @@ warmup_read_chars = None
 warmup_destination_exists = None
 if request.get("warmup_archive") is not None:
     warmup_destination = Path(request["warmup_destination"])
-    warmup_read_before = read_chars()
+    warmup_read_before, warmup_probe_chars = read_chars()
     try:
         with contextlib.redirect_stdout(captured), contextlib.redirect_stderr(captured):
             warmup_value = module.restore_project(
@@ -315,7 +316,10 @@ if request.get("warmup_archive") is not None:
         warmup_response = {"ok": True, "value": warmup_value}
     except Exception as error:
         warmup_response = {"ok": False, "error_type": type(error).__name__}
-    warmup_read_chars = max(0, read_chars() - warmup_read_before)
+    warmup_read_after, _ = read_chars()
+    warmup_read_chars = max(
+        0, warmup_read_after - warmup_read_before - warmup_probe_chars
+    )
     warmup_destination_exists = path_present(warmup_destination)
 write_limit_state = {"applied": False, "hit": False}
 original_file_limit = None
@@ -332,7 +336,7 @@ if request.get("fail_write") is True:
     signal.signal(signal.SIGXFSZ, record_file_limit)
     resource.setrlimit(resource.RLIMIT_FSIZE, (write_limit, hard_limit))
     write_limit_state["applied"] = True
-read_before = read_chars()
+read_before, read_probe_chars = read_chars()
 try:
     with contextlib.redirect_stdout(captured), contextlib.redirect_stderr(captured):
         value = module.restore_project(
@@ -345,7 +349,8 @@ finally:
     if write_limit_state["applied"]:
         resource.setrlimit(resource.RLIMIT_FSIZE, original_file_limit)
         signal.signal(signal.SIGXFSZ, original_xfsz_handler)
-read_delta = max(0, read_chars() - read_before)
+read_after, _ = read_chars()
+read_delta = max(0, read_after - read_before - read_probe_chars)
 after = tree_fingerprint(destination) if path_present(destination) else []
 outside_after = outside_fingerprint(destination)
 files = {}

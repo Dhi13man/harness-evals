@@ -541,7 +541,10 @@
       "additionalProperties": false,
       "properties": {
         "assurance": {
-          "const": "trusted-reviewed-attestation"
+          "enum": [
+            "operator-declared-review-records",
+            "trusted-reviewed-attestation"
+          ]
         },
         "freeze_record": {
           "minLength": 1,

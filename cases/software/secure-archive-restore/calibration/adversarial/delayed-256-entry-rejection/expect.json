@@ -6,11 +6,10 @@
     "path-containment",
     "unsupported-member-types",
     "duplicate-member-defense",
-    "declared-resource-limits",
     "invalid-archive-atomicity",
     "existing-destination-preserved",
     "publication-failure-atomicity",
     "public-call-contract"
   ],
-  "must_fail": ["bounded-entry-consumption"]
+  "must_fail": ["declared-resource-limits", "bounded-entry-consumption"]
 }

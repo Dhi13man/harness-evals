@@ -7,7 +7,6 @@ import json
 import os
 import shutil
 import stat
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -20,6 +19,7 @@ from skivolve.comparator_runtime import (
     CalibrationError,
     SandboxedClaudeExecutor,
     SpendLedger,
+    TransportExecution,
     TransportOverflowError,
     VerifiedExecutable,
     atomic_write_private_json,
@@ -41,7 +41,10 @@ from skivolve.providers import (  # noqa: E402
     ComparatorRequest,
     FakeProvider,
     ProviderError,
+    _resolve_agent_seccomp_executable,
 )
+
+_REAL_SECCOMP_PROBE = ClaudeCliProvider._probe_agent_seccomp
 
 
 class ClaudeCliProviderTests(unittest.TestCase):
@@ -57,8 +60,15 @@ class ClaudeCliProviderTests(unittest.TestCase):
         (config_root / ".credentials.json").write_text(
             '{"test_oauth_credential":true}\n', encoding="utf-8"
         )
+        self.fake_seccomp = Path(self.credential_temporary.name) / "apply-seccomp"
+        self.fake_seccomp.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        self.fake_seccomp.chmod(0o700)
         config_environment = patch.dict(
-            os.environ, {"CLAUDE_CONFIG_DIR": str(config_root)}
+            os.environ,
+            {
+                "CLAUDE_CONFIG_DIR": str(config_root),
+                "SKIVOLVE_CLAUDE_SECCOMP_APPLY_PATH": str(self.fake_seccomp),
+            },
         )
         config_environment.start()
         self.addCleanup(config_environment.stop)
@@ -74,8 +84,15 @@ class ClaudeCliProviderTests(unittest.TestCase):
         )
         version.start()
         sandbox.start()
+        seccomp_canary = patch.object(
+            ClaudeCliProvider,
+            "_probe_agent_seccomp",
+            return_value={"af_unix_socket_creation_denied": True},
+        )
+        seccomp_canary.start()
         self.addCleanup(version.stop)
         self.addCleanup(sandbox.stop)
+        self.addCleanup(seccomp_canary.stop)
 
     def config(self) -> ProviderConfig:
         return ProviderConfig(
@@ -84,6 +101,21 @@ class ClaudeCliProviderTests(unittest.TestCase):
             model="claude-test-20260710",
             max_budget_usd=1.25,
             timeout_seconds=30,
+        )
+
+    @staticmethod
+    def transport(
+        stdout: str,
+        stderr: str = "",
+        *,
+        returncode: int = 0,
+    ) -> TransportExecution:
+        return TransportExecution(
+            returncode=returncode,
+            stdout=stdout.encode("utf-8"),
+            stderr=stderr.encode("utf-8"),
+            duration_seconds=0.01,
+            executor={},
         )
 
     def private_copy_factory(self):
@@ -195,7 +227,7 @@ import sys
 import time
 
 if "--version" in sys.argv:
-    print("fake-claude 1.0")
+    print("2.1.198 (Claude Code)")
     raise SystemExit(0)
 
 context = sys.argv[sys.argv.index("--append-system-prompt") + 1]
@@ -222,6 +254,26 @@ private_pid_namespace = os.getpid() == 1
 credential_present = pathlib.Path(
     os.environ["CLAUDE_CONFIG_DIR"], ".credentials.json"
 ).is_file()
+settings = json.loads(sys.argv[sys.argv.index("--settings") + 1])
+credential = pathlib.Path(
+    os.environ["CLAUDE_CONFIG_DIR"], ".credentials.json"
+)
+security_settings_present = (
+    settings["sandbox"]["enabled"] is True
+    and settings["sandbox"]["failIfUnavailable"] is True
+    and settings["sandbox"]["allowUnsandboxedCommands"] is False
+    and settings["sandbox"]["network"]["deniedDomains"] == ["*"]
+    and settings["sandbox"]["credentials"]["files"]
+        == [{"mode": "deny", "path": str(credential)}]
+    and settings["sandbox"]["filesystem"]["denyRead"] == [str(credential)]
+    and settings["sandbox"]["filesystem"]["denyWrite"] == [str(credential)]
+    and settings["sandbox"]["seccomp"]["applyPath"].endswith("/apply-seccomp")
+    and pathlib.Path(settings["sandbox"]["seccomp"]["applyPath"]).is_file()
+    and settings["permissions"]["deny"] == [
+        f"Read(/{credential})",
+        f"Edit(/{credential})",
+    ]
+)
 pathlib.Path("value.txt").write_text("sandbox write")
 time.sleep(0.4)
 model = sys.argv[sys.argv.index("--model") + 1]
@@ -232,7 +284,8 @@ print(json.dumps({
         "host_signal_blocked": host_signal_blocked,
         "labels_hidden": labels_hidden,
         "private_pid_namespace": private_pid_namespace,
-        "credential_present": credential_present,
+        "controller_credential_present": credential_present,
+        "security_settings_present": security_settings_present,
     }, sort_keys=True),
     "total_cost_usd": 0.01,
     "usage": {"input_tokens": 1, "output_tokens": 1},
@@ -252,7 +305,7 @@ print(json.dumps({
             with patch.object(
                 ClaudeCliProvider,
                 "_capture_version",
-                return_value="fake-claude 1.0",
+                return_value="2.1.198 (Claude Code)",
             ):
                 provider = ClaudeCliProvider(config)
             requests = [
@@ -300,32 +353,34 @@ print(json.dumps({
                 self.assertEqual(
                     evidence,
                     {
-                        "credential_present": True,
+                        "controller_credential_present": True,
                         "host_signal_blocked": True,
                         "labels_hidden": True,
                         "paths_hidden": True,
                         "private_pid_namespace": True,
                         "process_files_hidden": True,
+                        "security_settings_present": True,
                     },
                 )
-                self.assertEqual(result.sandbox["kind"], "systemd-run-user")
+                self.assertEqual(
+                    result.sandbox["kind"],
+                    "systemd-run-user+claude-native-tool-sandbox",
+                )
                 self.assertEqual(
                     result.sandbox["credential_scope"],
-                    "ephemeral-home-only-inside-unit",
+                    "controller-auth-denied-to-model-tools",
                 )
             self.assertEqual((workspace_one / "value.txt").read_text(), "sandbox write")
             self.assertEqual((workspace_two / "value.txt").read_text(), "sandbox write")
 
-    @patch("skivolve.providers.subprocess.run")
+    @patch("skivolve.providers.execute_bounded_transport")
     def test_generator_and_independent_comparator_use_distinct_models(
         self, run
     ) -> None:
         generator_model = "claude-haiku-test-20260710"
         comparator_model = "claude-sonnet-test-20260710"
         run.side_effect = [
-            subprocess.CompletedProcess(
-                [],
-                0,
+            self.transport(
                 json.dumps(
                     {
                         "result": "agent result",
@@ -334,7 +389,6 @@ print(json.dumps({
                         "modelUsage": {generator_model: {}},
                     }
                 ),
-                "",
             ),
         ]
         generator = ClaudeCliProvider(
@@ -481,14 +535,12 @@ print(json.dumps({
         )
         self.assertNotEqual(generator_model, comparator_model)
 
-    @patch("skivolve.providers.subprocess.run")
+    @patch("skivolve.providers.execute_bounded_transport")
     def test_agent_uses_safe_stateless_budgeted_command_and_captures_exact_usage(
         self, run
     ) -> None:
         run.side_effect = [
-            subprocess.CompletedProcess(
-                [],
-                0,
+            self.transport(
                 json.dumps(
                     {
                         "result": "implemented and tested",
@@ -503,7 +555,6 @@ print(json.dumps({
                         },
                     }
                 ),
-                "",
             ),
         ]
         with tempfile.TemporaryDirectory() as temporary:
@@ -532,17 +583,40 @@ print(json.dumps({
         self.assertEqual(result.actual_models, ("claude-test-20260710",))
         self.assertEqual(result.cost_usd, 0.42)
         self.assertEqual(result.tokens, {"input_tokens": 5, "output_tokens": 7})
-        self.assertEqual(result.sandbox["kind"], "systemd-run-user")
+        self.assertEqual(
+            result.sandbox["kind"],
+            "systemd-run-user+claude-native-tool-sandbox",
+        )
         self.assertTrue(result.sandbox["enforced"])
         self.assertRegex(result.sandbox["claude_executable_sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual(
             result.sandbox["claude_execution_source"],
             "descriptor-verified-private-copy",
         )
+        self.assertEqual(
+            result.sandbox["credential_scope"],
+            "controller-auth-denied-to-model-tools",
+        )
+        self.assertEqual(
+            result.sandbox["agent_tool_sandbox"],
+            {
+                "credential_files_denied": True,
+                "fail_if_unavailable": True,
+                "network_domains_denied": True,
+                "seccomp_apply_sha256": hashlib.sha256(
+                    self.fake_seccomp.read_bytes()
+                ).hexdigest(),
+                "seccomp_canary": {"af_unix_socket_creation_denied": True},
+                "unsandboxed_commands_allowed": False,
+                "unix_socket_creation_denied": True,
+            },
+        )
+        self.assertRegex(result.sandbox["agent_settings_sha256"], r"^[0-9a-f]{64}$")
         command = run.call_args_list[0].args[0]
         for flag in (
             "--print",
             "--safe-mode",
+            "--setting-sources",
             "--no-session-persistence",
             "--disable-slash-commands",
             "--strict-mcp-config",
@@ -550,8 +624,49 @@ print(json.dumps({
             "--model",
             "--add-dir",
             "--allowed-tools",
+            "--settings",
         ):
             self.assertIn(flag, command)
+        settings = json.loads(command[command.index("--settings") + 1])
+        credential = Path(
+            f"/run/user/{os.getuid()}/skill-eval-runtime/home/.claude/.credentials.json"
+        )
+        self.assertEqual(
+            settings,
+            {
+                "permissions": {
+                    "deny": [
+                        f"Read(/{credential})",
+                        f"Edit(/{credential})",
+                    ]
+                },
+                "sandbox": {
+                    "allowUnsandboxedCommands": False,
+                    "credentials": {
+                        "files": [{"mode": "deny", "path": str(credential)}]
+                    },
+                    "enabled": True,
+                    "failIfUnavailable": True,
+                    "filesystem": {
+                        "denyRead": [str(credential)],
+                        "denyWrite": [str(credential)],
+                    },
+                    "network": {
+                        "allowAllUnixSockets": False,
+                        "allowedDomains": [],
+                        "deniedDomains": ["*"],
+                    },
+                    "seccomp": {
+                        "applyPath": str(
+                            Path(
+                                f"/run/user/{os.getuid()}/skill-eval-runtime/bin/"
+                                "apply-seccomp"
+                            )
+                        )
+                    },
+                },
+            },
+        )
         for sandbox_property in (
             "ProtectSystem=strict",
             "ProtectHome=read-only",
@@ -570,9 +685,20 @@ print(json.dumps({
         self.assertNotIn("--continue", command)
         self.assertNotIn("--resume", command)
         self.assertNotIn("--fallback-model", command)
-        self.assertEqual(run.call_args_list[0].kwargs["input"], "identical user prompt")
-        self.assertEqual(run.call_args_list[0].kwargs["timeout"], 12)
-        self.assertFalse(run.call_args_list[0].kwargs["shell"])
+        self.assertEqual(
+            command[command.index("--setting-sources") + 1],
+            "",
+        )
+        self.assertEqual(
+            command[command.index("--tools") + 1],
+            "Read,Edit,Write,Bash",
+        )
+        self.assertEqual(
+            run.call_args_list[0].kwargs["stdin_bytes"], b"identical user prompt"
+        )
+        self.assertEqual(run.call_args_list[0].kwargs["timeout_seconds"], 12)
+        inner = command[command.index("--") + 1 :]
+        self.assertIn("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1", inner)
 
     def test_comparator_delegates_canonical_bytes_to_shared_runtime(self) -> None:
         provider = ClaudeCliProvider(self.config())
@@ -689,14 +815,151 @@ print(json.dumps({
         self.assertEqual(called["order"], "BA")
         self.assertIs(called["executor"], executor_type.return_value)
 
-    @patch("skivolve.providers.subprocess.run")
+    def test_agent_requires_cli_version_with_credential_file_denial(self) -> None:
+        provider = ClaudeCliProvider(self.config())
+        for version in (
+            "2.1.186 (Claude Code)",
+            "unparseable",
+            "wrapper 999.0.0 around Claude Code 2.1.0",
+        ):
+            with self.subTest(version=version):
+                provider._version = version
+                with self.assertRaisesRegex(
+                    ProviderError,
+                    "credential isolation",
+                ):
+                    provider._require_agent_sandbox_version()
+        for version in ("2.1.187", "2.1.187 (Claude Code)", "2.1.211 (Claude Code)"):
+            with self.subTest(version=version):
+                provider._version = version
+                provider._require_agent_sandbox_version()
+
+    @patch("skivolve.providers.execute_bounded_transport")
+    def test_agent_requires_attested_seccomp_before_dispatch(self, execute) -> None:
+        provider = ClaudeCliProvider(self.config())
+        provider._verified_agent_seccomp = None
+        with (
+            patch(
+                "skivolve.providers._resolve_agent_seccomp_executable",
+                side_effect=ProviderError("seccomp helper unavailable"),
+            ),
+            tempfile.TemporaryDirectory() as temporary,
+            self.assertRaisesRegex(ProviderError, "seccomp helper unavailable"),
+        ):
+            provider.run_agent(
+                AgentRequest(
+                    case_id="case",
+                    variant_id="variant",
+                    prompt="prompt",
+                    model="claude-test-20260710",
+                    workspace=Path(temporary),
+                    skill_snapshot=None,
+                    sandbox_pair_root=Path(temporary),
+                    sandbox_repository_root=Path(temporary),
+                    system_context="context",
+                    timeout_seconds=5,
+                )
+            )
+        execute.assert_not_called()
+
+    def test_seccomp_canary_requires_observed_af_unix_denial(self) -> None:
+        verified = Mock(descriptor_path="/verified/apply-seccomp")
+        accepted = TransportExecution(
+            returncode=0,
+            stdout=b"af-unix-blocked\n",
+            stderr=b"",
+            duration_seconds=0.01,
+            executor={},
+        )
+        rejected = TransportExecution(
+            returncode=3,
+            stdout=b"",
+            stderr=b"",
+            duration_seconds=0.01,
+            executor={},
+        )
+        with patch(
+            "skivolve.providers.execute_bounded_transport",
+            side_effect=[accepted, rejected],
+        ) as execute:
+            evidence = _REAL_SECCOMP_PROBE(verified)
+            self.assertTrue(evidence["af_unix_socket_creation_denied"])
+            with self.assertRaisesRegex(ProviderError, "did not deny AF_UNIX"):
+                _REAL_SECCOMP_PROBE(verified)
+        self.assertEqual(execute.call_count, 2)
+
+    def test_seccomp_helper_resolves_from_executable_npm_prefix(self) -> None:
+        prefix = Path(self.credential_temporary.name) / "node-prefix"
+        claude = prefix / "bin" / "claude"
+        helper = (
+            prefix
+            / "lib/node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp/x64"
+            / "apply-seccomp"
+        )
+        claude.parent.mkdir(parents=True)
+        helper.parent.mkdir(parents=True)
+        claude.write_text("#!/bin/sh\n", encoding="utf-8")
+        helper.write_text("#!/bin/sh\n", encoding="utf-8")
+        claude.chmod(0o700)
+        helper.chmod(0o700)
+
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("skivolve.providers.platform.machine", return_value="x86_64"),
+        ):
+            resolved = _resolve_agent_seccomp_executable(
+                str(claude),
+                environment_variable="SKIVOLVE_TEST_SECCOMP_PATH",
+            )
+
+        self.assertEqual(resolved, helper.resolve())
+
+    def test_agent_stdout_limit_accepts_boundary_and_rejects_overflow(self) -> None:
+        provider = ClaudeCliProvider(self.config())
+        callback = Mock()
+        exact = '{"x":"' + ("x" * 56) + '"}'
+        self.assertEqual(len(exact.encode("ascii")), 64)
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch("skivolve.providers.MAX_RESPONSE_BYTES", 64),
+            patch.object(provider, "_terminate_unit") as terminate,
+        ):
+            payload, _duration = provider._execute(
+                [sys.executable, "-c", f"import sys;sys.stdout.write({exact!r})"],
+                prompt="",
+                cwd=Path(temporary),
+                timeout=5,
+                unit_name="exact-boundary",
+                on_dispatched=callback,
+            )
+            self.assertEqual(payload, {"x": "x" * 56})
+            terminate.assert_not_called()
+
+            with self.assertRaisesRegex(
+                ProviderError, "stdout exceeds byte limit"
+            ) as caught:
+                provider._execute(
+                    [
+                        sys.executable,
+                        "-c",
+                        "import sys;sys.stdout.write('x'*10000)",
+                    ],
+                    prompt="",
+                    cwd=Path(temporary),
+                    timeout=5,
+                    unit_name="overflow-boundary",
+                    on_dispatched=callback,
+                )
+        self.assertIsInstance(caught.exception.__cause__, TransportOverflowError)
+        self.assertEqual(len(caught.exception.__cause__.captured), 64)
+        terminate.assert_called_once_with("overflow-boundary")
+        self.assertEqual(callback.call_count, 2)
+
+    @patch("skivolve.providers.execute_bounded_transport")
     def test_response_without_actual_model_fails_closed(self, run) -> None:
         run.side_effect = [
-            subprocess.CompletedProcess(
-                [],
-                0,
+            self.transport(
                 json.dumps({"result": "done", "total_cost_usd": 0.1}),
-                "",
             ),
         ]
         provider = ClaudeCliProvider(self.config())
@@ -717,12 +980,10 @@ print(json.dumps({
                     )
                 )
 
-    @patch("skivolve.providers.subprocess.run")
+    @patch("skivolve.providers.execute_bounded_transport")
     def test_response_without_pinned_requested_model_fails_closed(self, run) -> None:
         run.side_effect = [
-            subprocess.CompletedProcess(
-                [],
-                0,
+            self.transport(
                 json.dumps(
                     {
                         "result": "done",
@@ -731,7 +992,6 @@ print(json.dumps({
                         "modelUsage": {"claude-fallback-20260710": {}},
                     }
                 ),
-                "",
             ),
         ]
         provider = ClaudeCliProvider(self.config())
@@ -752,7 +1012,7 @@ print(json.dumps({
                     )
                 )
 
-    @patch("skivolve.providers.subprocess.run")
+    @patch("skivolve.providers.execute_bounded_transport")
     def test_missing_cost_or_negative_tokens_fail_closed(self, run) -> None:
         payloads = [
             {
@@ -773,10 +1033,7 @@ print(json.dumps({
                 "modelUsage": {"claude-test-20260710": {}},
             },
         ]
-        run.side_effect = [
-            subprocess.CompletedProcess([], 0, json.dumps(payload), "")
-            for payload in payloads
-        ]
+        run.side_effect = [self.transport(json.dumps(payload)) for payload in payloads]
         provider = ClaudeCliProvider(self.config())
         with tempfile.TemporaryDirectory() as temporary:
             request = AgentRequest(
@@ -835,12 +1092,9 @@ print(json.dumps({
                     )
                 )
 
-    @patch("skivolve.providers.subprocess.run")
+    @patch("skivolve.providers.execute_bounded_transport")
     def test_agent_timeout_is_a_provider_failure(self, run) -> None:
-        run.side_effect = [
-            subprocess.TimeoutExpired([sys.executable], 2),
-            subprocess.CompletedProcess([], 0, "", ""),
-        ]
+        run.side_effect = CalibrationError("Claude CLI timed out after 2s")
         provider = ClaudeCliProvider(self.config())
         with tempfile.TemporaryDirectory() as temporary:
             with self.assertRaisesRegex(ProviderError, "timed out"):

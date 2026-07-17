@@ -40,6 +40,7 @@ def sandbox_environment(workspace: Path) -> dict[str, str]:
     shutil.copy2(python, tool_bin / Path(sys.executable).name)
     return {
         "EVAL_WORKSPACE": str(workspace),
+        "EVAL_SUITE_ROOT": str(SUITE_ROOT),
         "EVAL_CASE_ROOT": str(SUITE_ROOT / "cases" / "software"),
         "EVAL_SHARED_ROOT": str(SHARED_ROOT),
         "EVAL_TOOL_BIN": str(tool_bin),

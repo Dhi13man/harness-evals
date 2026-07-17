@@ -4,7 +4,7 @@
 
 [Website](https://dhi13man.github.io/skivolve/) · [Documentation](https://dhi13man.github.io/skivolve/docs/) · [Corpus](https://dhi13man.github.io/skivolve/corpus/) · [Security model](https://dhi13man.github.io/skivolve/security/)
 
-Skivolve is an open source system for reproducible A/B evaluation of skills and instruction bundles through agent harnesses. It combines isolated agent execution, objective case-specific verifiers, calibrated blinded pairwise comparison, immutable source bindings, bounded spend accounting, and review-sealed holdout support.
+Skivolve is an open source system for reproducible A/B evaluation of skills and instruction bundles through agent harnesses. It combines isolated agent execution, objective case-specific verifiers, calibrated blinded pairwise comparison, immutable source bindings, bounded spend accounting, and operator-recorded holdout support.
 
 Suites define their own skill identifiers, bundle locations, tasks, fixtures, verifier resources, and comparison arms. The included engineering and testing tracks are a reference corpus, not a domain boundary: suites may target any configured instruction bundle through cases that exercise observable behavior.
 
@@ -17,7 +17,7 @@ Version `0.4.0` is an alpha release for expert evaluation work on Linux. The pub
 - Built-in Claude CLI generation and comparison support plus an optional serialized Codex app-server diagnostic adapter.
 - Per-case objective oracles with known-good, known-bad, and adversarial calibration variants.
 - Blinded AB/BA comparison with a locked rubric, corpus, schemas, provider identity, spend journal, and certification contract.
-- One-shot externally reviewed holdout plans that bind exact task content, canonical per-variant sources, provider configuration, and mode-specific judgment authority.
+- Single-attempt holdout plans that bind exact task content, canonical per-variant sources, provider configuration, mode-specific judgment authority, and operator-declared review records.
 
 ## Architecture
 
@@ -35,12 +35,13 @@ flowchart LR
     H[Sealed holdout plan] --> R
 ```
 
-The runner treats prompts, fixtures, generated code, provider output, and comparator responses as untrusted. It hashes and rechecks Git sources, suite bytes, verifier trees, runtime adapters, and release locks. Linux user namespaces and transient `systemd --user` units isolate provider processes from the host repository, suite, credentials, and unrelated paths; only declared read-only bindings are exposed.
+The runner treats prompts, fixtures, generated code, provider output, and comparator responses as untrusted. It hashes and rechecks Git sources, suite bytes, verifier trees, runtime adapters, and release locks. Linux user namespaces and transient `systemd --user` units isolate provider processes from the host repository, suite, and unrelated paths. For Claude generation, the controller retains an ephemeral OAuth copy while code-owned Claude Code settings deny that file to built-in file tools and sandboxed Bash, remove weaker settings sources, deny network domains and unsandboxed commands, and fail if the Bash sandbox is unavailable. This boundary covers prompt-driven tools under the digest-attested Claude executable; it does not cover a compromised provider binary or host.
 
 ## Requirements
 
 - Linux with a working `systemd --user` manager.
 - util-linux `unshare`, `mount`, and `setpriv`, with unprivileged user and mount namespaces enabled.
+- Claude Code 2.1.187 or newer with `bubblewrap`, `socat`, and the executable `@anthropic-ai/sandbox-runtime` seccomp helper for Claude generation. Nonstandard helper installs must set `SKIVOLVE_CLAUDE_SECCOMP_APPLY_PATH`; the helper is digest-attested and absence fails before dispatch.
 - Python 3.11 or newer.
 - Git, Go, and Node.js for the included language fixtures.
 - An authenticated supported provider executable only for provider-backed runs.
@@ -117,7 +118,7 @@ Schema v2 preserves manifest bytes, hashes, and result field shapes through the 
 - `judged` requires both `comparator` and `comparator_profile`, and every case requires `comparator_contract`.
 - `objective_only` forbids `comparator`, `comparator_profile`, and every case-level `comparator_contract`. The runner constructs no comparator provider or runtime, creates no comparator spend ledger, selects the sole verifier-passing arm, and records equal verifier outcomes as `tie` under `verifier-pass-v1`.
 
-Objective-only schema-v3 and schema-v4 execution remains diagnostic. Schema v5 or newer may prepare and consume a production holdout without constructing a comparator: the plan seals the canonical `verifier-pass-v1` acceptance policy, and the normal source, provider, review, one-shot, case-integrity, and aggregate gates still apply.
+Objective-only schema-v3 and schema-v4 execution remains diagnostic. Schema v5 or newer may prepare and consume a production holdout without constructing a comparator: the plan seals the canonical `verifier-pass-v1` acceptance policy, and the normal source, provider, operator-recorded review, single-attempt, case-integrity, and aggregate gates still apply.
 
 ### Layout Paths
 
@@ -164,7 +165,9 @@ Schema-v5 suites prepare holdout-plan schema v3; schema-v6-or-newer suites prepa
 
 Judged plans seal the registered comparator profile descriptor, authority registry, release, and live certification evidence. Objective-only plans forbid comparator fields and seal the canonical verifier acceptance policy instead. Source authority is identical in both modes. Plan v4 additionally seals role-specific generator and comparator adapter bindings over the reviewed capability digest, contract revision, authority scope, normalized non-secret configuration, runtime provenance, and complete binding digest.
 
-To adopt generic source authority, migrate an unconsumed suite to schema v5, add `holdout.comparison_ids` in manifest comparison order, validate the suite, and prepare a new external plan. To adopt provider capability authority, migrate that suite to schema v6 and replace each provider `kind` with its reviewed adapter ID: `claude` becomes `claude-cli`, `codex` becomes `codex-app-server`, and `fake` becomes `deterministic-fake`. To adopt declared outputs, migrate to schema v7 and add one `artifact_contract` to every case. Validate after each migration and prepare a new plan v4. Provider capability revision 2 adds final-output capture, so unconsumed plan-v4 files created against revision 1 must be re-prepared; never rewrite a reviewed or consumed plan. Plan v2 remains readable only for compatible schema-v2 through schema-v4 suites; plan v3 remains readable only for compatible schema-v2 through schema-v5 suites and cannot authorize schema v6 or v7.
+New plans label their provenance as `operator-declared-review-records`. The CLI records reviewer labels and freeze and seal record locators supplied by the operator; it does not authenticate those people or records. Legacy `trusted-reviewed-attestation` plans remain readable for compatibility, but that historical label also supplies no cryptographic or identity assurance.
+
+To adopt generic source authority, migrate an unconsumed suite to schema v5, add `holdout.comparison_ids` in manifest comparison order, validate the suite, and prepare a new external plan. To adopt provider capability authority, migrate that suite to schema v6 and replace each provider `kind` with its reviewed adapter ID: `claude` becomes `claude-cli`, `codex` becomes `codex-app-server`, and `fake` becomes `deterministic-fake`. To adopt declared outputs, migrate to schema v7 and add one `artifact_contract` to every case. Validate after each migration and prepare a new plan v4. Provider capability revision 2 adds final-output capture; Claude revision 3 binds the native model-tool credential boundary. Unconsumed plan-v4 files created against an earlier applicable revision must be re-prepared; never rewrite a reviewed or consumed plan. Plan v2 remains readable only for compatible schema-v2 through schema-v4 suites; plan v3 remains readable only for compatible schema-v2 through schema-v5 suites and cannot authorize schema v6 or v7.
 
 ### Comparator Profiles
 
@@ -228,7 +231,7 @@ New provider contributions must preserve dispatch journaling, source and request
 
 ## Holdouts And Claims
 
-The checked-in suite intentionally has no holdout cases. A release claim requires a separately stored private suite frozen before candidate evaluation, independent reviewers, an externally written mode-`0600` holdout plan, the suite-declared release comparisons, and a single consumed execution record. Judged claims additionally require fresh live comparator certification; objective-only claims bind the reviewed verifier policy and construct no comparator. These controls reduce accidental leakage and reruns; they are not cryptographic proof against a hostile same-UID process or a compromised host.
+The checked-in suite intentionally has no holdout cases. A release claim requires a separately stored private suite frozen before candidate evaluation, an independent review process outside Skivolve, an externally written mode-`0600` holdout plan, the suite-declared release comparisons, and a single consumed execution record. The plan stores operator-supplied reviewer labels and record locators; Skivolve does not authenticate their identities or contents. Judged claims additionally require fresh live comparator certification; objective-only claims bind the reviewed verifier policy and construct no comparator. The consumption record is a single-attempt operational guard, not an append-only or cryptographic barrier: a hostile same-UID process can delete or bypass it. These controls reduce accidental leakage and reruns but do not protect a compromised host.
 
 Prepare a reviewed plan with:
 

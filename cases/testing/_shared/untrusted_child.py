@@ -70,6 +70,7 @@ def run_untrusted(
         "env": _required_tool("EVAL_ENV", "env"),
     }
     tool_bin = _required_directory("EVAL_TOOL_BIN")
+    suite_root = _optional_directory("EVAL_SUITE_ROOT")
     host_uid = os.environ.get("EVAL_HOST_UID")
     if host_uid is None or not host_uid.isascii() or not host_uid.isdigit():
         raise RuntimeError("EVAL_HOST_UID must contain the host numeric uid")
@@ -90,11 +91,13 @@ def run_untrusted(
             empty_runtime = masks / "runtime"
             empty_var_tmp = masks / "var-tmp"
             empty_shared_memory = masks / "shared-memory"
+            empty_suite = masks / "suite"
             for directory in (
                 empty_home,
                 empty_runtime,
                 empty_var_tmp,
                 empty_shared_memory,
+                empty_suite,
             ):
                 directory.mkdir()
             trampoline = [
@@ -120,6 +123,8 @@ def run_untrusted(
                 str(empty_runtime),
                 str(empty_var_tmp),
                 str(empty_shared_memory),
+                str(empty_suite),
+                str(suite_root) if suite_root is not None else "",
                 required["mount"],
                 required["setpriv"],
                 required["env"],
@@ -395,7 +400,7 @@ def _mount(mount_tool: str, *arguments: str, pass_fds: tuple[int, ...] = ()) -> 
 
 
 def _trampoline(arguments: list[str]) -> int:
-    if len(arguments) < 16 or arguments[14] != "--":
+    if len(arguments) < 18 or arguments[16] != "--":
         raise ValueError("invalid candidate trampoline arguments")
     raw_cwd_fd, raw_tool_bin, raw_status_fd = arguments[:3]
     status_fd = int(raw_status_fd)
@@ -405,12 +410,14 @@ def _trampoline(arguments: list[str]) -> int:
         empty_runtime,
         empty_var_tmp,
         empty_shared_memory,
-    ) = arguments[3:8]
-    mount_tool, setpriv_tool, env_tool = arguments[8:11]
-    go_root_fd = int(arguments[11])
-    raw_go_root = arguments[12]
-    gcc_exec_prefix = arguments[13]
-    candidate = arguments[15:]
+        empty_suite,
+        raw_suite_root,
+    ) = arguments[3:10]
+    mount_tool, setpriv_tool, env_tool = arguments[10:13]
+    go_root_fd = int(arguments[13])
+    raw_go_root = arguments[14]
+    gcc_exec_prefix = arguments[15]
+    candidate = arguments[17:]
     if not candidate:
         raise ValueError("candidate trampoline received no command")
 
@@ -422,12 +429,27 @@ def _trampoline(arguments: list[str]) -> int:
     runtime_path = Path("/run/user") / host_uid
     if not runtime_path.is_dir():
         raise RuntimeError(f"host runtime directory is missing: {runtime_path}")
-    read_only_masks = (
+    read_only_masks = [
         (empty_home, "/home"),
         (empty_runtime, "/run"),
         (empty_var_tmp, "/var/tmp"),
         (empty_shared_memory, "/dev/shm"),
-    )
+    ]
+    if raw_suite_root:
+        suite_root = Path(raw_suite_root)
+        if not suite_root.is_absolute() or suite_root in {
+            Path("/"),
+            Path("/dev"),
+            Path("/home"),
+            Path("/proc"),
+            Path("/run"),
+            Path("/sys"),
+            Path("/tmp"),
+            Path("/usr"),
+            Path("/var"),
+        }:
+            raise RuntimeError("candidate suite root mask target is unsafe")
+        read_only_masks.insert(0, (empty_suite, str(suite_root)))
     for source, target in read_only_masks:
         _mount(mount_tool, "--bind", source, target)
         _mount(

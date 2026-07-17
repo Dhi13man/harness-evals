@@ -578,6 +578,7 @@ class SourceGuardTests(unittest.TestCase):
                     workspace, ["subject.js"], ["subject.test.js"], 15
                 )
         self.assertTrue(result.passed, result.summary())
+        self.assertIn("TAP version 13", result.stdout)
 
     @unittest.skipUnless(shutil.which("go"), "Go is unavailable")
     def test_go_binary_runs_after_all_module_sources_are_removed(self):

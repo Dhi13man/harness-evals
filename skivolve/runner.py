@@ -42,6 +42,7 @@ from skivolve.comparator_runtime import (
 
 from .holdout_plan import (
     EMPTY_SOURCE_SHA256,
+    OPERATOR_DECLARED_ASSURANCE,
     SOURCE_FINGERPRINT_DOMAIN,
     HoldoutPlan,
     HoldoutPlanError,
@@ -1274,6 +1275,14 @@ def _provider_authority_binding(
         "protocol": protocol_provenance,
         "version": provider_version,
     }
+    runtime_binding = getattr(provider, "authority_runtime_provenance", None)
+    if callable(runtime_binding):
+        try:
+            runtime_provenance["sandbox_runtime"] = runtime_binding(role)
+        except Exception as exc:
+            raise RunnerError(
+                "provider authority runtime provenance is unavailable"
+            ) from exc
     binding = {
         "adapter_id": capabilities.adapter_id,
         "authority_scope": capabilities.authority_scope,
@@ -2298,7 +2307,7 @@ class EvalRunner:
         freeze_record: str,
         seal_record: str,
     ) -> dict[str, Any]:
-        """Prepare, write, and prove one sealed production holdout plan."""
+        """Prepare, write, and preflight one sealed production holdout plan."""
 
         self._ensure_open()
         if (
@@ -2373,7 +2382,7 @@ class EvalRunner:
                 for case in draft["cases"]
             ],
             "provenance": {
-                "assurance": "trusted-reviewed-attestation",
+                "assurance": OPERATOR_DECLARED_ASSURANCE,
                 "privacy_claim": "not-a-cryptographic-privacy-proof",
                 "frozen_before_candidate_evaluation": True,
                 "sealed_after_independent_review": True,
@@ -5142,7 +5151,7 @@ def _aggregate(
     holdout_release_gate = {
         "passed": holdout_protocol_valid,
         "applicable": selection.split == "holdout",
-        "trusted_reviewed_attestation_present": holdout_plan is not None,
+        "operator_declared_review_records_present": holdout_plan is not None,
         "generator_release_authoritative": generator_release_authoritative,
         "provider_authority_bound": provider_authority_bound,
         "privacy_proof_claimed": False,
