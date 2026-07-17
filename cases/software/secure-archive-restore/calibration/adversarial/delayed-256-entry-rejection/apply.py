@@ -16,7 +16,14 @@ loop = """            for count, member in enumerate(archive, start=1):
                     raise ValueError("archive has too many entries")
 """
 replacement = """            members = []
+            prescan_total_size = 0
             for member in archive:
+                if member.isfile():
+                    if member.size > MAX_FILE_BYTES:
+                        raise ValueError(f"archive entry too large: {member.name}")
+                    prescan_total_size += member.size
+                    if prescan_total_size > MAX_TOTAL_BYTES:
+                        raise ValueError("archive content exceeds total size limit")
                 members.append(member)
                 if len(members) >= DELAYED_ENTRY_CHECK:
                     break
@@ -28,6 +35,6 @@ if source.count(constant) != 1 or source.count(loop) != 1:
     raise RuntimeError("lazy-good entry-bound implementation changed")
 source = source.replace(
     constant,
-    "MAX_ENTRIES = 128\nDELAYED_ENTRY_CHECK = 384\n",
+    "MAX_ENTRIES = 128\nDELAYED_ENTRY_CHECK = 256\n",
 )
 target.write_text(source.replace(loop, replacement), encoding="utf-8")

@@ -259,14 +259,8 @@ class SoftwareCalibrationExpectationTests(unittest.TestCase):
             "adversarial/absolute-home-residue": ("path-containment",),
             "adversarial/aggregate-limit-slack": ("declared-resource-limits",),
             "adversarial/clobber-publication-race": ("publication-failure-atomicity",),
-            "adversarial/delayed-384-entry-rejection": (
-                "declared-resource-limits",
-                "bounded-entry-consumption",
-            ),
-            "adversarial/delayed-entry-rejection": (
-                "declared-resource-limits",
-                "bounded-entry-consumption",
-            ),
+            "adversarial/delayed-256-entry-rejection": ("bounded-entry-consumption",),
+            "adversarial/delayed-entry-rejection": ("bounded-entry-consumption",),
             "adversarial/destructive-existing-destination": (
                 "existing-destination-preserved",
             ),
@@ -285,10 +279,7 @@ class SoftwareCalibrationExpectationTests(unittest.TestCase):
             "adversarial/partial-total-content-read": ("declared-resource-limits",),
             "adversarial/publication-residue": ("publication-failure-atomicity",),
             "adversarial/raw-name-dedup": ("duplicate-member-defense",),
-            "adversarial/unbounded-member-scan": (
-                "declared-resource-limits",
-                "bounded-entry-consumption",
-            ),
+            "adversarial/unbounded-member-scan": ("bounded-entry-consumption",),
             "adversarial/unsupported-link": ("unsupported-member-types",),
             "adversarial/variadic-public-signature": ("public-call-contract",),
             "adversarial/write-residue": ("invalid-archive-atomicity",),
