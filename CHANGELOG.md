@@ -4,6 +4,21 @@ All notable changes to Skivolve are documented in this file. The format follows 
 
 ## [Unreleased]
 
+### Changed
+
+- Reclassified holdout reviewer labels and record locators as operator-declared provenance rather than authenticated review evidence.
+- Advanced the Claude provider capability to revision 3 and bound its sandbox runtime, seccomp helper, and enforcement canary into provider authority.
+- Bounded generator and comparator subprocess output, timeout cleanup, and process-group termination.
+
+### Migration
+
+- Re-prepare unconsumed holdout plans that bind the Claude capability revision 2 authority; reviewed or consumed plans remain immutable.
+
+### Security
+
+- Fail Claude preflight unless code-owned sandbox settings and a digest-attested seccomp helper demonstrably block Unix sockets, while also denying credential paths and outbound network access.
+- Hide the evaluation suite and oracle sources from candidate processes, detect stable-file read races, and reject oversized or invalid UTF-8 provider output before parsing.
+
 ## [0.4.0] - 2026-07-17
 
 ### Added
