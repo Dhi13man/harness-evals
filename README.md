@@ -4,11 +4,11 @@
 
 [Website](https://dhi13man.github.io/skivolve/) · [Documentation](https://dhi13man.github.io/skivolve/docs/) · [Corpus](https://dhi13man.github.io/skivolve/corpus/) · [Security model](https://dhi13man.github.io/skivolve/security/)
 
-Skivolve is an open source system for running reproducible A/B evaluations of skills and instruction bundles through agent harnesses. It combines isolated agent execution, objective case-specific verifiers, calibrated blinded pairwise comparison, immutable source bindings, bounded spend accounting, and review-sealed holdout support.
+Skivolve is an open source system for reproducible A/B evaluation of skills and instruction bundles through agent harnesses. It combines isolated agent execution, objective case-specific verifiers, calibrated blinded pairwise comparison, immutable source bindings, bounded spend accounting, and review-sealed holdout support.
 
-A suite defines its own skill identifiers, bundle locations, tasks, fixtures, verifier resources, and comparison arms. The included engineering and testing tracks are the first reference corpus, not the evaluator's domain boundary; suites may target any configured instruction bundle with cases that exercise its observable behavior. Harness integrations live behind provider adapters.
+Suites define their own skill identifiers, bundle locations, tasks, fixtures, verifier resources, and comparison arms. The included engineering and testing tracks are a reference corpus, not a domain boundary: suites may target any configured instruction bundle through cases that exercise observable behavior.
 
-Version `0.4.0` is an alpha release for expert evaluation work on Linux. The public corpus contains train and validation cases, not a private holdout, and the repository does not ship live comparator certification evidence or claim that one harness or bundle is superior. The production-authority blinded comparator is calibrated for software-change evidence. A test-authority plain-language profile proves that non-engineering semantics can use the shared engine, but its corpus is an author-authored fixture rather than independent production calibration. Other domains should use objective case verifiers or contribute a separately calibrated comparator profile rather than reusing either rubric without validation.
+Version `0.4.0` is an alpha release for expert evaluation work on Linux. The public corpus contains train and validation cases, not a private holdout; the repository ships no live comparator certification evidence and makes no claim that one harness or bundle is superior. The production-authority blinded comparator is calibrated for software-change evidence. A test-authority plain-language profile shows that the shared engine supports other semantics, but its author-authored corpus is not independent production calibration. Other domains should use objective case verifiers or a comparator profile separately calibrated for that domain rather than reusing either bundled rubric without validation.
 
 ## What Is Included
 
@@ -35,7 +35,7 @@ flowchart LR
     H[Sealed holdout plan] --> R
 ```
 
-The runner treats prompts, fixtures, generated code, provider output, and comparator responses as untrusted. Git sources, suite bytes, verifier trees, runtime adapters, and release locks are hashed and rechecked across the run. Linux user namespaces and transient `systemd --user` units isolate provider processes and deny access to the host repository, suite, credentials, and unrelated paths except for narrowly declared read-only bindings.
+The runner treats prompts, fixtures, generated code, provider output, and comparator responses as untrusted. It hashes and rechecks Git sources, suite bytes, verifier trees, runtime adapters, and release locks. Linux user namespaces and transient `systemd --user` units isolate provider processes from the host repository, suite, credentials, and unrelated paths; only declared read-only bindings are exposed.
 
 ## Requirements
 
@@ -92,7 +92,7 @@ This command still invokes the configured generation provider. A non-dry run can
 
 ## Suite Contract
 
-The root [suite.json](suite.json) is a complete repository-local reference suite. Its baseline is a pinned Git commit and its candidate is the current committed worktree. It demonstrates the source contract without depending on another repository.
+The root [suite.json](suite.json) is a repository-local reference suite with a pinned-commit baseline and current committed-worktree candidate. It demonstrates the source contract without another repository.
 
 | Component | Purpose |
 | --- | --- |
@@ -108,11 +108,11 @@ The root [suite.json](suite.json) is a complete repository-local reference suite
 
 The executable parser in [skivolve/manifest.py](skivolve/manifest.py) is authoritative. [suite.schema.json](suite.schema.json) is the editor and interoperability contract; changes must keep both in exact behavioral parity.
 
-To evaluate bundles in another repository, copy the manifest, set `repository_root`, point worktree variants at that repository, replace Git refs with commits reachable there, and update every case's bundle ID, bundle source, and explicit context files. Suite files and shared verifier resources may use any contained layout; they do not need to mirror the evaluated repository. Schema-v2 through schema-v4 holdouts retain the release-owned `original` baseline adapter. Schema-v5-or-newer holdouts bind every selected source directly in a newly reviewed plan instead of deriving source authority from the comparator release.
+To evaluate bundles in another repository, copy the manifest, set `repository_root`, point worktree variants there, replace Git refs with reachable commits, and update each case's bundle ID, bundle source, and explicit context files. Suite files and shared verifier resources may use any contained layout. Schema-v2 through schema-v4 holdouts retain the release-owned `original` baseline adapter; schema-v5-or-newer holdouts bind every selected source directly in a newly reviewed plan.
 
 ### Evaluation Modes
 
-Schema v2 remains supported without changing existing manifest bytes, manifest hashes, or result field shapes and selects the current software comparator through its compatibility path. Schema v3 adds an explicit `evaluation_mode`; schema v4 adds explicit layout paths; schema v5 adds suite-owned release comparison selection and generic sealed source authority; schema v6 replaces provider `kind` values with reviewed adapter IDs and seals provider capability authority; schema v7 adds explicit case artifact contracts. Schema-v2 and schema-v3 compatibility paths derive each bundle from `skills/<skill>` and discover `cases/testing/_shared` when that legacy directory exists. Comparator release and certification hashes still change when their locked code or resources change.
+Schema v2 preserves manifest bytes, hashes, and result field shapes through the software comparator compatibility path. Later schemas add: v3 `evaluation_mode`; v4 layout paths; v5 suite-owned release comparison and source authority; v6 reviewed adapter IDs and capability authority; and v7 artifact contracts. The v2 and v3 paths still derive bundles from `skills/<skill>` and discover legacy `cases/testing/_shared`. Release and certification hashes continue to change when locked code or resources change.
 
 - `judged` requires both `comparator` and `comparator_profile`, and every case requires `comparator_contract`.
 - `objective_only` forbids `comparator`, `comparator_profile`, and every case-level `comparator_contract`. The runner constructs no comparator provider or runtime, creates no comparator spend ledger, selects the sole verifier-passing arm, and records equal verifier outcomes as `tie` under `verifier-pass-v1`.
@@ -144,8 +144,6 @@ Raw semantic output and normalized content are independently capped at 1 MiB. Te
 Verifiers receive canonical bytes through a separate read-only `EVAL_ARTIFACT_PATH` with `EVAL_ARTIFACT_KIND` and `EVAL_ARTIFACT_SHA256`. Workspace-diff verifiers retain a disposable copy of the candidate workspace. Final-output verifiers receive a pristine read-only fixture workspace, so candidate files cannot substitute the declared output or influence verification through undeclared workspace mutations.
 
 Objective-only suites may use all three artifact kinds. Judged suites additionally require their selected comparator profile to list the kind in `supported_artifact_kinds`; the bundled calibrated profiles currently remain `workspace_diff`-only, so judged final-output suites fail preflight before provider or comparator dispatch. Adding judged text or JSON support requires a separately reviewed and calibrated profile rather than treating output as a patch.
-
-The installed-wheel smoke builds a schema-v4 suite outside the checkout and site-packages with `instruction-bundles/demo`, `oracle-resources/common`, and `cases/basic`. It binds the exact external worktree commit, bundle fingerprint, shared-tree hash, and verifier path through the installed CLI.
 
 ### Holdout Source Authority
 
@@ -182,7 +180,7 @@ A judged schema-v3-or-newer suite selects either a registered built-in profile o
 }
 ```
 
-Built-in profiles resolve from installed package resources through a code-owned registry. The registry binds the exact descriptor, production and test releases, and certification contract. Wheel and sdist CI inspects every descriptor-declared resource, compares their bytes, rejects unexpected profile data, installs the wheel in a clean environment, and dry-runs an external suite through the installed CLI without importing the checkout.
+Built-in profiles resolve from installed package resources through a code-owned registry. The registry binds the exact descriptor, production and test releases, and certification contract. Wheel and sdist CI inspects every descriptor-declared resource, compares their bytes, rejects unexpected profile data, and installs the wheel in a clean environment. The installed-wheel smoke builds a schema-v4 suite outside the checkout and site-packages with `instruction-bundles/demo`, `oracle-resources/common`, and `cases/basic`, binds its exact external worktree commit, bundle fingerprint, shared-tree hash, and verifier path, then dry-runs the installed CLI without importing the checkout.
 
 A suite-local profile uses `{"kind": "suite_local", "path": "profiles/example"}`. Its path must be canonical, contained, and free of symlinks. Its descriptor may declare only data resources; calibration, collection, certification, and comparison code always come from the installed package. A suite-local profile cannot reuse a built-in ID, claim registry authority, prepare or consume a holdout, or authorize a release, even when all of its internal hashes and certification evidence are self-consistent.
 
@@ -190,9 +188,7 @@ Packaged built-in profiles preserve the legacy certification location at `skivol
 
 #### Semantic Contracts And Authority
 
-Every profile release binds a strict `semantic-contract.json` alongside its rubric, corpus, request template, response schema, evidence schema, and release metadata. The semantic contract selects a reviewed closed engine strategy and adapters, then owns criterion IDs, requirement kinds, qualitative and performance basis vocabularies, corpus identity, calibration policy, and criterion-support thresholds. Suite case contracts are parsed against the selected profile's immutable vocabulary; the more general JSON schema validates their structure without hard-coding one domain's criterion names.
-
-Profiles do not supply executable evaluator code. Engine strategies and adapters remain an explicit allowlist in the installed package, so a data profile cannot introduce an import path, expression language, or arbitrary parser. Adding a new semantic shape that the closed engine cannot represent requires a normal reviewed code contribution.
+Every profile release binds a strict `semantic-contract.json` alongside its rubric, corpus, request template, response schema, evidence schema, and release metadata. The contract selects a reviewed closed engine strategy and adapters, then owns criterion IDs, requirement kinds, qualitative and performance basis vocabularies, corpus identity, calibration policy, and criterion-support thresholds. The installed engine parses case contracts against that immutable vocabulary; the general JSON schema validates structure without hard-coding one domain's criterion names. Profiles are data-only: they cannot supply import paths, expression languages, or parsers, and new semantic shapes require a reviewed code contribution to the package allowlist.
 
 Authority is separate from internal hash consistency:
 
@@ -226,7 +222,7 @@ Case oracles must judge observable requirements, resist implementation-name and 
 
 Built-in harness integrations conform to the `EvalProvider` contract in [skivolve/providers.py](skivolve/providers.py). Schema v6 selects adapters from the immutable reviewed registry in [skivolve/provider_capabilities.py](skivolve/provider_capabilities.py); arbitrary manifest-supplied imports and capability declarations are not supported. Each registry entry fixes its roles, contract revision, concurrency, sandbox, authority scope, billing evidence, provenance fields, and artifact outputs, and its canonical digest is included in the locked release inputs.
 
-`claude-cli` supports generation and comparison with production authority. `codex-app-server` is a serialized diagnostic generation adapter with subscription-quota provenance. `deterministic-fake` supports generation and comparison only under test authority. A production schema-v6-or-newer holdout additionally requires manifest-built, non-injected Claude generator and comparator instances, exact executable and runtime bindings, sealed plan-v4 authority, and live comparator certification. Provider names, injected instances, suite fields, and provider results cannot elevate their own authority. Neither provider determines which skill domains a suite may evaluate.
+`claude-cli` supports generation and comparison with production authority. `codex-app-server` is a serialized diagnostic generation adapter with subscription-quota provenance. `deterministic-fake` supports generation and comparison only under test authority. A production schema-v6-or-newer holdout additionally requires manifest-built, non-injected Claude generator and comparator instances, exact executable and runtime bindings, sealed plan-v4 authority, and live comparator certification. Provider names, injected instances, suite fields, and results cannot elevate their own authority.
 
 New provider contributions must preserve dispatch journaling, source and request bindings, cleanup guarantees, credential isolation, cost or quota provenance, deterministic test doubles, and fail-closed authority checks.
 
