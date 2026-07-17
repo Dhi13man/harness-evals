@@ -1,19 +1,19 @@
 # Security Policy
 
-Harness Evals executes untrusted generated code and integrates with authenticated coding harnesses. Security reports are handled privately so a fix can be prepared before details become public.
+Skivolve executes untrusted generated code and integrates with authenticated coding harnesses. Security reports are handled privately so a fix can be prepared before details become public.
 
 ## Supported Versions
 
 | Version   | Supported |
 | --------- | --------- |
-| `0.3.x`   | Yes       |
-| `<=0.2.x` | No        |
+| `0.4.x`   | Yes       |
+| `<=0.3.x` | No        |
 
 Only the latest patch release receives security fixes. A security fix may change a provider protocol lock, release authority, schema, corpus, or result contract when preserving the old behavior would remain unsafe.
 
 ## Reporting A Vulnerability
 
-Use [GitHub private vulnerability reporting](https://github.com/Dhi13man/harness-evals/security/advisories/new). If GitHub private reporting is unavailable, email `dhiman.seal@hotmail.com` with the subject `Harness Evals security report`.
+Use [GitHub private vulnerability reporting](https://github.com/Dhi13man/skivolve/security/advisories/new). If GitHub private reporting is unavailable, email `dhiman.seal@hotmail.com` with the subject `Skivolve security report`.
 
 Include the affected version or commit, threat model, reproduction steps, impact, and any suggested mitigation. Remove real credentials, private holdout content, access tokens, personal data, and unnecessary exploit payloads. You should receive acknowledgement within seven days and a status update within fourteen days. Timelines for remediation and coordinated disclosure depend on severity and affected release surfaces.
 

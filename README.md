@@ -1,12 +1,14 @@
-# Harness Evals
+# Skivolve
 
-[![CI](https://github.com/Dhi13man/harness-evals/actions/workflows/ci.yml/badge.svg)](https://github.com/Dhi13man/harness-evals/actions/workflows/ci.yml) [![CodeQL](https://github.com/Dhi13man/harness-evals/actions/workflows/codeql.yml/badge.svg)](https://github.com/Dhi13man/harness-evals/actions/workflows/codeql.yml) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Dhi13man/harness-evals/badge)](https://scorecard.dev/viewer/?uri=github.com/Dhi13man/harness-evals) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://github.com/Dhi13man/skivolve/actions/workflows/ci.yml/badge.svg)](https://github.com/Dhi13man/skivolve/actions/workflows/ci.yml) [![CodeQL](https://github.com/Dhi13man/skivolve/actions/workflows/codeql.yml/badge.svg)](https://github.com/Dhi13man/skivolve/actions/workflows/codeql.yml) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Dhi13man/skivolve/badge)](https://scorecard.dev/viewer/?uri=github.com/Dhi13man/skivolve) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Harness Evals is an open source system for running reproducible A/B evaluations of skills and instruction bundles through agent harnesses. It combines isolated agent execution, objective case-specific verifiers, calibrated blinded pairwise comparison, immutable source bindings, bounded spend accounting, and review-sealed holdout support.
+[Website](https://dhi13man.github.io/skivolve/) · [Documentation](https://dhi13man.github.io/skivolve/docs/) · [Corpus](https://dhi13man.github.io/skivolve/corpus/) · [Security model](https://dhi13man.github.io/skivolve/security/)
+
+Skivolve is an open source system for running reproducible A/B evaluations of skills and instruction bundles through agent harnesses. It combines isolated agent execution, objective case-specific verifiers, calibrated blinded pairwise comparison, immutable source bindings, bounded spend accounting, and review-sealed holdout support.
 
 A suite defines its own skill identifiers, bundle locations, tasks, fixtures, verifier resources, and comparison arms. The included engineering and testing tracks are the first reference corpus, not the evaluator's domain boundary; suites may target any configured instruction bundle with cases that exercise its observable behavior. Harness integrations live behind provider adapters.
 
-Version `0.3.0` is an alpha release for expert evaluation work on Linux. The public corpus contains train and validation cases, not a private holdout, and the repository does not ship live comparator certification evidence or claim that one harness or bundle is superior. The production-authority blinded comparator is calibrated for software-change evidence. A test-authority plain-language profile proves that non-engineering semantics can use the shared engine, but its corpus is an author-authored fixture rather than independent production calibration. Other domains should use objective case verifiers or contribute a separately calibrated comparator profile rather than reusing either rubric without validation.
+Version `0.4.0` is an alpha release for expert evaluation work on Linux. The public corpus contains train and validation cases, not a private holdout, and the repository does not ship live comparator certification evidence or claim that one harness or bundle is superior. The production-authority blinded comparator is calibrated for software-change evidence. A test-authority plain-language profile proves that non-engineering semantics can use the shared engine, but its corpus is an author-authored fixture rather than independent production calibration. Other domains should use objective case verifiers or contribute a separately calibrated comparator profile rather than reusing either rubric without validation.
 
 ## What Is Included
 
@@ -47,27 +49,27 @@ The runtime package has one exact third-party Python dependency for RFC 8785 JSO
 
 ## Quick Start
 
-Install and verify the published 0.3.0 wheel with a GitHub CLI release that provides `gh attestation`:
+Install and verify the published 0.4.0 wheel with a GitHub CLI release that provides `gh attestation`:
 
 ```bash
-mkdir -p /tmp/harness-evals-0.3.0
-gh release download v0.3.0 --repo Dhi13man/harness-evals --pattern "harness_evals-0.3.0*" --pattern SHA256SUMS --dir /tmp/harness-evals-0.3.0
-(cd /tmp/harness-evals-0.3.0 && sha256sum --check SHA256SUMS)
-gh attestation verify /tmp/harness-evals-0.3.0/harness_evals-0.3.0-py3-none-any.whl --repo Dhi13man/harness-evals
-python -m pip install /tmp/harness-evals-0.3.0/harness_evals-0.3.0-py3-none-any.whl
+mkdir -p /tmp/skivolve-0.4.0
+gh release download v0.4.0 --repo Dhi13man/skivolve --pattern "skivolve-0.4.0*" --pattern SHA256SUMS --dir /tmp/skivolve-0.4.0
+(cd /tmp/skivolve-0.4.0 && sha256sum --check SHA256SUMS)
+gh attestation verify /tmp/skivolve-0.4.0/skivolve-0.4.0-py3-none-any.whl --repo Dhi13man/skivolve
+python -m pip install /tmp/skivolve-0.4.0/skivolve-0.4.0-py3-none-any.whl
 ```
 
 For source development:
 
 ```bash
-git clone https://github.com/Dhi13man/harness-evals.git
-cd harness-evals
+git clone https://github.com/Dhi13man/skivolve.git
+cd skivolve
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e ".[test]"
 python -m unittest discover -s tests -v
-python -m unittest discover -s harness_evals/comparator_calibration/tests -v
+python -m unittest discover -s skivolve/comparator_calibration/tests -v
 python cases/software/calibrate.py
 python cases/testing/calibrate.py
 ```
@@ -75,7 +77,7 @@ python cases/testing/calibrate.py
 Run the packaged command from the repository root:
 
 ```bash
-harness-evals --comparison original-vs-no-skill --dry-run
+skivolve --comparison original-vs-no-skill --dry-run
 ```
 
 Dry runs validate the manifest, tools, source references, cases, provider protocol locks, and selection without invoking a model or writing result artifacts. Provider validation still requires the configured executable and its local runtime prerequisites.
@@ -83,7 +85,7 @@ Dry runs validate the manifest, tools, source references, cases, provider protoc
 Run objective verifiers without comparator judgments:
 
 ```bash
-harness-evals --comparison candidate-vs-original --verifier-only --output-dir /tmp/harness-evals-verifier
+skivolve --comparison candidate-vs-original --verifier-only --output-dir /tmp/skivolve-verifier
 ```
 
 This command still invokes the configured generation provider. A non-dry run can consume metered API spend or subscription quota. The manifest and preflight report per-call and run ceilings before dispatch; an unknown exact charge is accounted at the configured ceiling.
@@ -104,7 +106,7 @@ The root [suite.json](suite.json) is a complete repository-local reference suite
 | `comparisons` | Define control/treatment roles, exactly three repetitions, and AB/BA order. |
 | `cases` | Bind a prompt, fixture, verifier, bundle ID, schema-v4-or-newer `bundle_source`, explicit context, expectations, schema-v7 `artifact_contract`, and, for judged suites, a comparator contract. |
 
-The executable parser in [harness_evals/manifest.py](harness_evals/manifest.py) is authoritative. [suite.schema.json](suite.schema.json) is the editor and interoperability contract; changes must keep both in exact behavioral parity.
+The executable parser in [skivolve/manifest.py](skivolve/manifest.py) is authoritative. [suite.schema.json](suite.schema.json) is the editor and interoperability contract; changes must keep both in exact behavioral parity.
 
 To evaluate bundles in another repository, copy the manifest, set `repository_root`, point worktree variants at that repository, replace Git refs with commits reachable there, and update every case's bundle ID, bundle source, and explicit context files. Suite files and shared verifier resources may use any contained layout; they do not need to mirror the evaluated repository. Schema-v2 through schema-v4 holdouts retain the release-owned `original` baseline adapter. Schema-v5-or-newer holdouts bind every selected source directly in a newly reviewed plan instead of deriving source authority from the comparator release.
 
@@ -184,7 +186,7 @@ Built-in profiles resolve from installed package resources through a code-owned 
 
 A suite-local profile uses `{"kind": "suite_local", "path": "profiles/example"}`. Its path must be canonical, contained, and free of symlinks. Its descriptor may declare only data resources; calibration, collection, certification, and comparison code always come from the installed package. A suite-local profile cannot reuse a built-in ID, claim registry authority, prepare or consume a holdout, or authorize a release, even when all of its internal hashes and certification evidence are self-consistent.
 
-Packaged built-in profiles preserve the legacy certification location at `harness_evals/comparator_calibration/evidence/` when that checkout layout exists. An external installed-package suite uses `comparator-evidence/<profile-id>/certification.json`; the certification's `evidence_path` is relative to that same profile-specific directory. Certification and evidence files are enforced as owner-only regular files. Their existing non-symlink parent directory should be mode `0700`; directory permissions remain the suite operator's responsibility.
+Packaged built-in profiles preserve the legacy certification location at `skivolve/comparator_calibration/evidence/` when that checkout layout exists. An external installed-package suite uses `comparator-evidence/<profile-id>/certification.json`; the certification's `evidence_path` is relative to that same profile-specific directory. Certification and evidence files are enforced as owner-only regular files. Their existing non-symlink parent directory should be mode `0700`; directory permissions remain the suite operator's responsibility.
 
 #### Semantic Contracts And Authority
 
@@ -222,7 +224,7 @@ Case oracles must judge observable requirements, resist implementation-name and 
 
 ## Providers
 
-Built-in harness integrations conform to the `EvalProvider` contract in [harness_evals/providers.py](harness_evals/providers.py). Schema v6 selects adapters from the immutable reviewed registry in [harness_evals/provider_capabilities.py](harness_evals/provider_capabilities.py); arbitrary manifest-supplied imports and capability declarations are not supported. Each registry entry fixes its roles, contract revision, concurrency, sandbox, authority scope, billing evidence, provenance fields, and artifact outputs, and its canonical digest is included in the locked release inputs.
+Built-in harness integrations conform to the `EvalProvider` contract in [skivolve/providers.py](skivolve/providers.py). Schema v6 selects adapters from the immutable reviewed registry in [skivolve/provider_capabilities.py](skivolve/provider_capabilities.py); arbitrary manifest-supplied imports and capability declarations are not supported. Each registry entry fixes its roles, contract revision, concurrency, sandbox, authority scope, billing evidence, provenance fields, and artifact outputs, and its canonical digest is included in the locked release inputs.
 
 `claude-cli` supports generation and comparison with production authority. `codex-app-server` is a serialized diagnostic generation adapter with subscription-quota provenance. `deterministic-fake` supports generation and comparison only under test authority. A production schema-v6-or-newer holdout additionally requires manifest-built, non-injected Claude generator and comparator instances, exact executable and runtime bindings, sealed plan-v4 authority, and live comparator certification. Provider names, injected instances, suite fields, and provider results cannot elevate their own authority. Neither provider determines which skill domains a suite may evaluate.
 
@@ -235,7 +237,7 @@ The checked-in suite intentionally has no holdout cases. A release claim require
 Prepare a reviewed plan with:
 
 ```bash
-harness-evals-prepare-holdout --suite /secure/evals/suite.json --output /secure/evals/plan.json --plan-id release-v1 --reviewer reviewer-a --reviewer reviewer-b --freeze-record review:freeze:release-v1 --seal-record review:seal:release-v1
+skivolve-prepare-holdout --suite /secure/evals/suite.json --output /secure/evals/plan.json --plan-id release-v1 --reviewer reviewer-a --reviewer reviewer-b --freeze-record review:freeze:release-v1 --seal-record review:seal:release-v1
 ```
 
 Every non-dry holdout attempt consumes its plan before any agent or comparator call, including failed and interrupted runs. There is no holdout resume.
@@ -244,16 +246,16 @@ Every non-dry holdout attempt consumes its plan before any agent or comparator c
 
 The Python package follows Semantic Versioning. Before `1.0.0`, minor versions may change the Python API or CLI with changelog and migration notes. Manifest schema versions, corpus versions, comparator protocol versions, and release-lock versions are independent compatibility surfaces and are never inferred from the package version.
 
-- Package and CLI: `0.3.0`
+- Package and CLI: `0.4.0`
 - Suite manifest schemas: `2` through `6` compatibility, `7` current
-- Included suite: `harness-evals-software-engineering-v1`
+- Included suite: `skivolve-software-engineering-v1`
 - Comparator evaluator: `2.3.0`
 
 See [CHANGELOG.md](CHANGELOG.md) for release changes and [GOVERNANCE.md](GOVERNANCE.md) for decision and release authority.
 
 ## Security And Support
 
-Do not report vulnerabilities in a public issue. Follow [SECURITY.md](SECURITY.md) for private reporting, supported versions, and the project trust boundary. Usage questions and non-sensitive failures belong in [GitHub Discussions](https://github.com/Dhi13man/harness-evals/discussions) or an issue selected through [SUPPORT.md](SUPPORT.md).
+Do not report vulnerabilities in a public issue. Follow [SECURITY.md](SECURITY.md) for private reporting, supported versions, and the project trust boundary. Usage questions and non-sensitive failures belong in [GitHub Discussions](https://github.com/Dhi13man/skivolve/discussions) or an issue selected through [SUPPORT.md](SUPPORT.md).
 
 ## Contributing
 
@@ -261,4 +263,4 @@ Contributions are welcome under [CONTRIBUTING.md](CONTRIBUTING.md) and the [Cont
 
 ## License
 
-Harness Evals is released under the [MIT License](LICENSE).
+Skivolve is released under the [MIT License](LICENSE).

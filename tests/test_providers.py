@@ -15,8 +15,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from harness_evals import comparator_runtime
-from harness_evals.comparator_runtime import (
+from skivolve import comparator_runtime
+from skivolve.comparator_runtime import (
     CalibrationError,
     SandboxedClaudeExecutor,
     SpendLedger,
@@ -34,8 +34,8 @@ sys.path.insert(0, str(HARNESS_ROOT))
 _REQUEST_SHA256 = "a" * 64
 _INVOCATION_ID = "b" * 64
 
-from harness_evals.manifest import ProviderConfig  # noqa: E402
-from harness_evals.providers import (  # noqa: E402
+from skivolve.manifest import ProviderConfig  # noqa: E402
+from skivolve.providers import (  # noqa: E402
     AgentRequest,
     ClaudeCliProvider,
     ComparatorRequest,
@@ -102,9 +102,7 @@ class ClaudeCliProviderTests(unittest.TestCase):
     def test_provider_context_closes_private_copy_and_rejects_reuse(self) -> None:
         roots, create = self.private_copy_factory()
         with (
-            patch(
-                "harness_evals.comparator_runtime.tempfile.mkdtemp", side_effect=create
-            ),
+            patch("skivolve.comparator_runtime.tempfile.mkdtemp", side_effect=create),
             ClaudeCliProvider(self.config()) as provider,
         ):
             attestation = provider._verified_executable
@@ -126,10 +124,8 @@ class ClaudeCliProviderTests(unittest.TestCase):
             return attestation
 
         with (
-            patch(
-                "harness_evals.comparator_runtime.tempfile.mkdtemp", side_effect=create
-            ),
-            patch("harness_evals.providers.VerifiedExecutable", side_effect=capture),
+            patch("skivolve.comparator_runtime.tempfile.mkdtemp", side_effect=create),
+            patch("skivolve.providers.VerifiedExecutable", side_effect=capture),
             patch.object(
                 ClaudeCliProvider,
                 "_capture_version",
@@ -320,7 +316,7 @@ print(json.dumps({
             self.assertEqual((workspace_one / "value.txt").read_text(), "sandbox write")
             self.assertEqual((workspace_two / "value.txt").read_text(), "sandbox write")
 
-    @patch("harness_evals.providers.subprocess.run")
+    @patch("skivolve.providers.subprocess.run")
     def test_generator_and_independent_comparator_use_distinct_models(
         self, run
     ) -> None:
@@ -456,12 +452,10 @@ print(json.dumps({
         )
         runtime.run_transport.return_value = transport
         with (
-            patch("harness_evals.providers.SandboxedClaudeExecutor"),
-            patch("harness_evals.providers.validate_response", return_value=decision),
-            patch(
-                "harness_evals.providers.expected_transport_hashes", return_value=hashes
-            ),
-            patch("harness_evals.providers.validate_executor_evidence"),
+            patch("skivolve.providers.SandboxedClaudeExecutor"),
+            patch("skivolve.providers.validate_response", return_value=decision),
+            patch("skivolve.providers.expected_transport_hashes", return_value=hashes),
+            patch("skivolve.providers.validate_executor_evidence"),
         ):
             comparator.run_comparator(
                 ComparatorRequest(
@@ -487,7 +481,7 @@ print(json.dumps({
         )
         self.assertNotEqual(generator_model, comparator_model)
 
-    @patch("harness_evals.providers.subprocess.run")
+    @patch("skivolve.providers.subprocess.run")
     def test_agent_uses_safe_stateless_budgeted_command_and_captures_exact_usage(
         self, run
     ) -> None:
@@ -681,12 +675,10 @@ print(json.dumps({
             sandbox_isolation_root=isolation_root,
         )
         with (
-            patch("harness_evals.providers.SandboxedClaudeExecutor") as executor_type,
-            patch("harness_evals.providers.validate_response", return_value=decision),
-            patch(
-                "harness_evals.providers.expected_transport_hashes", return_value=hashes
-            ),
-            patch("harness_evals.providers.validate_executor_evidence"),
+            patch("skivolve.providers.SandboxedClaudeExecutor") as executor_type,
+            patch("skivolve.providers.validate_response", return_value=decision),
+            patch("skivolve.providers.expected_transport_hashes", return_value=hashes),
+            patch("skivolve.providers.validate_executor_evidence"),
         ):
             result = provider.run_comparator(request)
 
@@ -697,7 +689,7 @@ print(json.dumps({
         self.assertEqual(called["order"], "BA")
         self.assertIs(called["executor"], executor_type.return_value)
 
-    @patch("harness_evals.providers.subprocess.run")
+    @patch("skivolve.providers.subprocess.run")
     def test_response_without_actual_model_fails_closed(self, run) -> None:
         run.side_effect = [
             subprocess.CompletedProcess(
@@ -725,7 +717,7 @@ print(json.dumps({
                     )
                 )
 
-    @patch("harness_evals.providers.subprocess.run")
+    @patch("skivolve.providers.subprocess.run")
     def test_response_without_pinned_requested_model_fails_closed(self, run) -> None:
         run.side_effect = [
             subprocess.CompletedProcess(
@@ -760,7 +752,7 @@ print(json.dumps({
                     )
                 )
 
-    @patch("harness_evals.providers.subprocess.run")
+    @patch("skivolve.providers.subprocess.run")
     def test_missing_cost_or_negative_tokens_fail_closed(self, run) -> None:
         payloads = [
             {
@@ -843,7 +835,7 @@ print(json.dumps({
                     )
                 )
 
-    @patch("harness_evals.providers.subprocess.run")
+    @patch("skivolve.providers.subprocess.run")
     def test_agent_timeout_is_a_provider_failure(self, run) -> None:
         run.side_effect = [
             subprocess.TimeoutExpired([sys.executable], 2),
@@ -890,7 +882,7 @@ print(json.dumps({
         sandbox_failure = OSError(sentinel)
         with (
             patch(
-                "harness_evals.providers.SandboxedClaudeExecutor",
+                "skivolve.providers.SandboxedClaudeExecutor",
                 side_effect=sandbox_failure,
             ),
             self.assertRaises(ProviderError) as caught,
@@ -1115,7 +1107,7 @@ class SharedComparatorRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             real_fsync = os.fsync
             with patch(
-                "harness_evals.comparator_runtime.os.fsync", wraps=real_fsync
+                "skivolve.comparator_runtime.os.fsync", wraps=real_fsync
             ) as fsync:
                 SpendLedger(2.0, Path(temporary) / "spend.jsonl").reserve(
                     1.0,
@@ -1172,7 +1164,7 @@ class SharedComparatorRuntimeTests(unittest.TestCase):
                 return chunk
 
             with patch(
-                "harness_evals.comparator_runtime.os.read", side_effect=mutating_read
+                "skivolve.comparator_runtime.os.read", side_effect=mutating_read
             ):
                 with self.assertRaisesRegex(CalibrationError, "stable owner-only"):
                     load_private_json_capture(target)

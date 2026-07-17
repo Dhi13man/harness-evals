@@ -13,7 +13,7 @@ include holdout-plan.schema.json
 include suite.json
 include suite.schema.json
 recursive-include cases *
-recursive-include harness_evals *.json *.md
+recursive-include skivolve *.json *.md
 recursive-include skills *.md
 recursive-include tests *.py
 global-exclude __pycache__

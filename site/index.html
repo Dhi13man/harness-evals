@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Skivolve: Reproducible Evaluation of Agent Skills and Instructions</title>
+    <meta name="description" content="Run reproducible A/B evaluations of agent skills and instruction bundles with isolated harnesses, objective verifiers, blinded comparison, and sealed holdouts.">
+    <meta name="robots" content="index, follow, max-image-preview:large">
+    <meta name="theme-color" content="#07111f">
+    <link rel="canonical" href="https://dhi13man.github.io/skivolve/">
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+    <link rel="manifest" href="site.webmanifest">
+    <link rel="stylesheet" href="styles.css">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Skivolve">
+    <meta property="og:title" content="Skivolve: Evolve agent skills with evidence">
+    <meta property="og:description" content="Reproducible A/B evaluation of agent skills and instruction bundles through isolated harnesses, objective verifiers, and blinded comparison.">
+    <meta property="og:url" content="https://dhi13man.github.io/skivolve/">
+    <meta property="og:image" content="https://dhi13man.github.io/skivolve/assets/og-image.png">
+    <meta property="og:image:alt" content="Skivolve: Evolve agent skills with evidence">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Skivolve: Evolve agent skills with evidence">
+    <meta name="twitter:description" content="Reproducible evaluation of agent skills and instructions.">
+    <meta name="twitter:image" content="https://dhi13man.github.io/skivolve/assets/og-image.png">
+    <meta name="twitter:image:alt" content="Skivolve: Evolve agent skills with evidence">
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "https://dhi13man.github.io/skivolve/#website",
+            "url": "https://dhi13man.github.io/skivolve/",
+            "name": "Skivolve",
+            "description": "Open-source agent skill evaluation framework for reproducible evaluation of skills and instructions."
+          },
+          {
+            "@type": "SoftwareSourceCode",
+            "@id": "https://dhi13man.github.io/skivolve/#software",
+            "name": "Skivolve",
+            "description": "Open-source framework for reproducible A/B evaluation of agent skills and instruction bundles through agent harnesses.",
+            "codeRepository": "https://github.com/Dhi13man/skivolve",
+            "url": "https://dhi13man.github.io/skivolve/",
+            "license": "https://opensource.org/license/mit",
+            "programmingLanguage": "Python",
+            "runtimePlatform": "Linux and Python 3.11 or newer",
+            "version": "0.4.0",
+            "isAccessibleForFree": true,
+            "keywords": "agent skill evaluation, instruction evaluation, agent harness evaluation, reproducible A/B evaluation, blinded pairwise comparison"
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
+    <header class="site-header">
+      <nav class="site-nav shell" aria-label="Main navigation">
+        <a class="brand" href="./" aria-current="page">
+          <img src="assets/mark.svg" alt="" width="40" height="40">
+          <span>Skivolve</span>
+        </a>
+        <ul class="nav-links">
+          <li><a href="#how-it-works">How it works</a></li>
+          <li><a href="corpus/">Corpus</a></li>
+          <li><a href="docs/">Docs</a></li>
+          <li><a href="security/">Security</a></li>
+          <li><a href="faq/">FAQ</a></li>
+          <li><a href="https://github.com/Dhi13man/skivolve">GitHub</a></li>
+        </ul>
+      </nav>
+    </header>
+
+    <main id="main-content" tabindex="-1">
+      <section class="hero shell" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="eyebrow">Open-source agent skill evaluation framework</p>
+          <h1 id="hero-title">Evolve agent skills <span class="accent">with evidence.</span></h1>
+          <p class="lede">Skivolve runs reproducible A/B evaluations of skills and instruction bundles through agent harnesses—combining isolated execution, objective case verifiers, calibrated blinded comparison, and sealed holdout support.</p>
+          <div class="button-row">
+            <a class="button button-primary" href="#quick-start">Run the quick start</a>
+            <a class="button" href="corpus/">Explore the corpus</a>
+          </div>
+          <p class="alpha-note"><strong>Honest boundary:</strong> Skivolve is an expert Linux alpha. It ships a public train and validation corpus, not a private holdout, leaderboard, or claim that any harness or bundle is superior.</p>
+        </div>
+
+        <div class="hero-visual" aria-label="Evaluation evidence flow">
+          <div class="evidence-ledger">
+            <div class="ledger-header">
+              <span>evidence-ledger / candidate-vs-original</span>
+              <span class="status">source bound</span>
+            </div>
+            <div class="flow">
+              <div class="flow-lanes">
+                <div class="flow-node">
+                  <strong>A · candidate</strong>
+                  <span>Git-bound source</span>
+                </div>
+                <div class="flow-node">
+                  <strong>B · original</strong>
+                  <span>Frozen control</span>
+                </div>
+              </div>
+              <div class="flow-node flow-node-join">
+                <strong>Objective verifier</strong>
+                <span>Case-specific, bounded, adversarially calibrated</span>
+              </div>
+              <div class="flow-node flow-node-join">
+                <strong>Blinded AB / BA comparison</strong>
+                <span>Only for eligible ambiguity</span>
+              </div>
+              <div class="flow-node flow-node-join">
+                <strong>Evidence gates</strong>
+                <span>Artifacts, source, spend, and authority checked</span>
+              </div>
+            </div>
+            <div class="ledger-footer">
+              <span>schema 7</span>
+              <span>bounded · reproducible · reviewable</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="shell proof-rail" aria-label="Project facts">
+        <div class="proof"><strong>17</strong><span>calibrated cases</span></div>
+        <div class="proof"><strong>3</strong><span>artifact contracts</span></div>
+        <div class="proof"><strong>3 × 3</strong><span>comparison arms and repetitions</span></div>
+        <div class="proof"><strong>MIT</strong><span>open-source license</span></div>
+      </div>
+
+      <section class="section shell" aria-labelledby="trust-title">
+        <div class="section-heading">
+          <p class="eyebrow">The trust problem</p>
+          <h2 id="trust-title">Instruction changes are easy to propose. Trustworthy improvement is harder.</h2>
+          <p class="lede">A plausible answer is not an evaluation. Skivolve binds what ran, where it came from, which observable behavior was checked, and which authority—if any—may support a release claim.</p>
+        </div>
+        <div class="grid-3">
+          <article class="card">
+            <p class="label">01 · Oracle first</p>
+            <h3>Objective case verifiers</h3>
+            <p>Each contributed case must reject known-bad and adversarial variants while accepting a known-good implementation under explicit resource bounds.</p>
+          </article>
+          <article class="card">
+            <p class="label">02 · Identity control</p>
+            <h3>Blinded pairwise comparison</h3>
+            <p>Eligible ambiguity is compared in both AB and BA order with locked rubrics and calibrated support, reducing identity and presentation-order leakage.</p>
+          </article>
+          <article class="card">
+            <p class="label">03 · Reproduction</p>
+            <h3>Git-bound execution</h3>
+            <p>Source variants, fixture trees, runtime adapters, and evaluation inputs are hashed and rechecked so drift fails before dispatch.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section shell" id="how-it-works" aria-labelledby="pipeline-title">
+        <div class="section-heading">
+          <p class="eyebrow">How it works</p>
+          <h2 id="pipeline-title">A narrow path from candidate to claim.</h2>
+          <p class="lede">Every stage exists to falsify a different failure mode. No single model judge gets to collapse the chain into a vibe.</p>
+        </div>
+        <div class="grid-4 steps">
+          <article class="card step">
+            <h3>Bind the suite</h3>
+            <p>Load strict manifests, exact Git variants, cases, provider authority, and declared artifact contracts.</p>
+          </article>
+          <article class="card step">
+            <h3>Run in isolation</h3>
+            <p>Dispatch the harness in a bounded Linux workspace separated from source, credentials, and verifier authority.</p>
+          </article>
+          <article class="card step">
+            <h3>Verify behavior</h3>
+            <p>Evaluate the produced patch, final text, or final JSON with a case-specific objective oracle.</p>
+          </article>
+          <article class="card step">
+            <h3>Gate the evidence</h3>
+            <p>Use calibrated comparison only where permitted, then enforce source, spend, provenance, and holdout gates.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section shell" aria-labelledby="difference-title">
+        <div class="section-heading">
+          <p class="eyebrow">Designed for evidence</p>
+          <h2 id="difference-title">Five controls that make an eval worth reading.</h2>
+        </div>
+        <div class="grid-2">
+          <article class="card"><h3>Adversarial oracle calibration</h3><p>Known-good, known-bad, and adversarial implementations test whether a verifier can actually reject the defect it claims to measure.</p></article>
+          <article class="card"><h3>Bounded execution and spend</h3><p>Timeouts, per-call ceilings, run ceilings, dispatch journals, and interrupted reservations keep the experimental budget explicit.</p></article>
+          <article class="card"><h3>Immutable source authority</h3><p>Canonical fingerprints cover bundle paths, bytes, executable modes, context files, and exact Git objects.</p></article>
+          <article class="card"><h3>Sealed, one-shot holdouts</h3><p>Externally reviewed plans bind cases, variants, provider configuration, and comparison authority before a release attempt is consumed.</p></article>
+          <article class="card"><h3>Provider capability boundaries</h3><p>Claude production authority, Codex diagnostic generation, and deterministic test fakes have separate immutable capability contracts.</p></article>
+          <article class="card"><h3>Explicit claim limits</h3><p>Objective-only diagnostics, judged comparisons, public validation cases, and private holdouts are not allowed to borrow one another’s authority.</p></article>
+        </div>
+      </section>
+
+      <section class="section shell" aria-labelledby="artifact-title">
+        <div class="section-heading">
+          <p class="eyebrow">Artifact contracts</p>
+          <h2 id="artifact-title">Evaluate the output you actually care about.</h2>
+          <p class="lede">Schema 7 declares one canonical artifact per case. Verifiers and comparators receive the same bounded representation.</p>
+        </div>
+        <div class="grid-3">
+          <article class="card artifact"><code>workspace_diff</code><h3>Repository change</h3><p>Canonical UTF-8 patch evidence for implementation and refactoring tasks.</p></article>
+          <article class="card artifact"><code>final_output_text</code><h3>Written answer</h3><p>Strict UTF-8 with normalized LF endings for prose, instructions, and other textual output.</p></article>
+          <article class="card artifact"><code>final_output_json</code><h3>Structured result</h3><p>Bounded parsing and RFC 8785 canonicalization for machine-readable output.</p></article>
+        </div>
+      </section>
+
+      <section class="section shell" aria-labelledby="corpus-title">
+        <div class="section-heading">
+          <p class="eyebrow">Reference corpus</p>
+          <h2 id="corpus-title">Seventeen cases built to break weak evidence.</h2>
+          <p class="lede">Ten engineering and seven testing cases span train and validation splits. The corpus is a reference implementation of the case contract, not the evaluator’s domain limit.</p>
+        </div>
+        <div class="table-scroll">
+          <table class="corpus-table">
+            <caption class="sr-only">Included reference corpus by track and split</caption>
+            <thead><tr><th scope="col">Track</th><th scope="col">Train</th><th scope="col">Validation</th><th scope="col">Focus</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">Engineering</th><td>5</td><td>5</td><td>Correctness, compatibility, security, concurrency, performance, simplicity</td></tr>
+              <tr><th scope="row">Testing</th><td>5</td><td>2</td><td>Oracle sensitivity, boundary fidelity, state models, flake control, idempotency</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="button-row button-row-spaced">
+          <a class="button" href="corpus/">Inspect case design</a>
+          <a class="button" href="https://github.com/Dhi13man/skivolve/tree/main/cases">Browse case source on GitHub</a>
+        </div>
+      </section>
+
+      <section class="section shell" id="quick-start" aria-labelledby="quick-title">
+        <div class="section-heading">
+          <p class="eyebrow">Quick start</p>
+          <h2 id="quick-title">Validate the experiment before spending on it.</h2>
+        </div>
+        <pre><code>git clone https://github.com/Dhi13man/skivolve.git
+cd skivolve
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -e ".[test]"
+
+# Validate manifests, tools, sources, cases, and protocol locks.
+skivolve --comparison original-vs-no-skill --dry-run
+
+# Run objective verifiers without comparator judgments.
+skivolve --comparison candidate-vs-original --verifier-only \
+  --output-dir /tmp/skivolve-verifier</code></pre>
+        <p class="callout"><strong>Provider-backed runs may consume metered API spend or subscription quota.</strong> The dry run reports configured ceilings before dispatch. Read the <a href="docs/">getting-started guide</a> and <a href="security/">security model</a> before a non-dry run.</p>
+      </section>
+
+      <section class="section shell" aria-labelledby="boundary-title">
+        <div class="section-heading">
+          <p class="eyebrow">Provider boundary</p>
+          <h2 id="boundary-title">Capability is not authority.</h2>
+          <p class="lede">Provider names and model output cannot promote themselves. Authority follows reviewed adapter capabilities, exact runtime bindings, sealed plans, and—in judged production paths—live comparator certification.</p>
+        </div>
+        <div class="grid-3">
+          <article class="card"><p class="label">Production</p><h3>Claude CLI</h3><p>Generation and comparison under the repository’s strict provider and release-authority contract.</p></article>
+          <article class="card"><p class="label">Diagnostic</p><h3>Codex app-server</h3><p>Serialized diagnostic generation with subscription-quota provenance; it does not carry production authority.</p></article>
+          <article class="card"><p class="label">Test only</p><h3>Deterministic fake</h3><p>Offline generation and comparison for unit tests under explicit test authority.</p></article>
+        </div>
+      </section>
+
+      <section class="section shell" aria-labelledby="faq-title">
+        <div class="section-heading">
+          <p class="eyebrow">Questions</p>
+          <h2 id="faq-title">What Skivolve does—and refuses to pretend.</h2>
+        </div>
+        <details><summary>Does Skivolve automatically improve an agent skill?</summary><p>No. It measures candidate changes against declared cases and evidence gates. Choosing or generating the candidate remains outside the evaluator’s claim.</p></details>
+        <details><summary>Is this an LLM benchmark or leaderboard?</summary><p>No. The repository does not publish model rankings or claim that one harness or bundle is superior. It is an evaluation framework and reference corpus.</p></details>
+        <details><summary>Can I evaluate domains beyond software engineering?</summary><p>Yes. A suite defines its own skills, tasks, fixtures, verifier resources, and bundles. New domains need objective case verifiers or a separately calibrated comparator profile.</p></details>
+        <details><summary>Does the public repository contain a private holdout?</summary><p>No. Release claims require a separately stored private suite frozen before candidate evaluation, independent reviewers, and a consumed sealed plan.</p></details>
+        <p class="button-row-spaced"><a href="faq/">Read the full FAQ and terminology guide</a>.</p>
+      </section>
+
+      <section class="section shell" aria-labelledby="cta-title">
+        <div class="card">
+          <p class="eyebrow">Open source · MIT</p>
+          <h2 id="cta-title">Make the next instruction change answer to evidence.</h2>
+          <p class="lede">Start with the reference suite, propose a case, or bring a domain-specific bundle and objective oracle.</p>
+          <div class="button-row button-row-spaced">
+            <a class="button button-primary" href="https://github.com/Dhi13man/skivolve">View Skivolve on GitHub</a>
+            <a class="button" href="https://github.com/Dhi13man/skivolve/blob/main/CONTRIBUTING.md">Contribute a case</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="shell footer-layout">
+        <div>
+          <a class="brand" href="./"><img src="assets/mark.svg" alt="" width="40" height="40"><span>Skivolve</span></a>
+          <p class="muted">Reproducible evaluation of agent skills and instructions.</p>
+        </div>
+        <nav class="footer-links" aria-label="Footer navigation">
+          <a href="docs/">Docs</a>
+          <a href="corpus/">Corpus</a>
+          <a href="security/">Security</a>
+          <a href="https://github.com/Dhi13man/skivolve/releases">Releases</a>
+          <a href="https://github.com/Dhi13man/skivolve/blob/main/CITATION.cff">Cite</a>
+          <a href="https://github.com/Dhi13man/skivolve/blob/main/LICENSE">MIT license</a>
+        </nav>
+      </div>
+    </footer>
+  </body>
+</html>

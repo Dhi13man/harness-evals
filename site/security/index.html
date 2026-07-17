@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Security Model for Isolated Agent Evaluation | Skivolve</title>
+    <meta name="description" content="Understand Skivolve's trust boundaries for generated code, provider credentials, source integrity, bounded spend, comparator authority, and sealed holdouts.">
+    <meta name="robots" content="index, follow, max-image-preview:large">
+    <meta name="theme-color" content="#07111f">
+    <link rel="canonical" href="https://dhi13man.github.io/skivolve/security/">
+    <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="../styles.css">
+    <meta property="og:type" content="article">
+    <meta property="og:site_name" content="Skivolve">
+    <meta property="og:title" content="Skivolve Security and Trust Boundary">
+    <meta property="og:description" content="Generated code is untrusted. Learn what Skivolve isolates, binds, limits, and explicitly does not claim.">
+    <meta property="og:url" content="https://dhi13man.github.io/skivolve/security/">
+    <meta property="og:image" content="https://dhi13man.github.io/skivolve/assets/og-image.png">
+    <meta property="og:image:alt" content="Skivolve: Evolve agent skills with evidence">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Skivolve Security and Trust Boundary">
+    <meta name="twitter:description" content="Security boundaries for isolated agent skill evaluation.">
+    <meta name="twitter:image" content="https://dhi13man.github.io/skivolve/assets/og-image.png">
+    <meta name="twitter:image:alt" content="Skivolve: Evolve agent skills with evidence">
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "TechArticle",
+        "headline": "Skivolve Security and Trust Boundary",
+        "description": "Security model for generated code, provider credentials, source integrity, bounded spend, and sealed holdouts.",
+        "url": "https://dhi13man.github.io/skivolve/security/",
+        "isPartOf": { "@id": "https://dhi13man.github.io/skivolve/#website" },
+        "about": "Secure agent evaluation"
+      }
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
+    <header class="site-header">
+      <nav class="site-nav shell" aria-label="Main navigation">
+        <a class="brand" href="../"><img src="../assets/mark.svg" alt="" width="40" height="40"><span>Skivolve</span></a>
+        <ul class="nav-links">
+          <li><a href="../#how-it-works">How it works</a></li>
+          <li><a href="../corpus/">Corpus</a></li>
+          <li><a href="../docs/">Docs</a></li>
+          <li><a href="./" aria-current="page">Security</a></li>
+          <li><a href="../faq/">FAQ</a></li>
+          <li><a href="https://github.com/Dhi13man/skivolve">GitHub</a></li>
+        </ul>
+      </nav>
+    </header>
+
+    <main id="main-content" tabindex="-1">
+      <header class="page-hero shell">
+        <p class="eyebrow">Security model · Fail closed</p>
+        <h1>Generated code is untrusted.</h1>
+        <p class="lede">Skivolve isolates execution, binds exact sources and authorities, limits resources and spend, and documents the host threats it cannot defeat. Security claims stop at the tested boundary.</p>
+      </header>
+
+      <section class="section shell" aria-labelledby="defends-title">
+        <div class="section-heading"><p class="eyebrow">Defended paths</p><h2 id="defends-title">Controls for the evaluator’s actual attack surface.</h2></div>
+        <div class="grid-3">
+          <article class="card"><h3>Source tampering</h3><p>Git objects, bundle paths, file bytes, executable modes, context files, verifier trees, and runtime sources are fingerprinted and rechecked for drift.</p></article>
+          <article class="card"><h3>Filesystem escape</h3><p>Path containment, symlink checks, read-only bindings, pristine fixture workspaces, and isolated transient units separate generated output from authority inputs.</p></article>
+          <article class="card"><h3>Credential exposure</h3><p>Provider processes receive narrowly validated runtime bindings while generated code is denied direct access to source credentials and unrelated host paths.</p></article>
+          <article class="card"><h3>Unbounded execution</h3><p>Per-case timeouts, bounded artifacts, process isolation, and declared resource checks constrain attacker-controlled tasks and outputs.</p></article>
+          <article class="card"><h3>Spend ambiguity</h3><p>Dispatch journals, per-call and run ceilings, and forfeited interrupted reservations prevent failures from disappearing from cost evidence.</p></article>
+          <article class="card"><h3>Authority substitution</h3><p>Provider capabilities, comparator releases, sealed plans, and certification evidence are immutable inputs; response fields cannot elevate their own authority.</p></article>
+        </div>
+      </section>
+
+      <section class="section shell" aria-labelledby="boundary-title">
+        <div class="section-heading"><p class="eyebrow">Explicit limit</p><h2 id="boundary-title">Isolation is not a hostile-host guarantee.</h2></div>
+        <div class="callout">
+          <p>Skivolve does not claim protection against a compromised kernel, malicious root, hostile same-UID processes outside the transient isolation unit, a checkout whose code and release locks are both already compromised, provider-side account compromise, or reviewers who collude or leak private holdout content.</p>
+        </div>
+        <div class="grid-2 button-row-spaced">
+          <article class="card"><h3>Use a dedicated host for sensitive holdouts</h3><p>Keep unrelated same-UID workloads absent, minimize credentials, store private suites and plans outside the checkout, and restrict their filesystem permissions.</p></article>
+          <article class="card"><h3>Keep claim authority outside model output</h3><p>Reviewers, source control, provider capability registries, objective verifiers, locked comparator profiles, and consumed plans remain separate authorities.</p></article>
+        </div>
+      </section>
+
+      <section class="section shell" aria-labelledby="pages-title">
+        <div class="section-heading"><p class="eyebrow">Website supply chain</p><h2 id="pages-title">A static artifact with deployment-only privilege.</h2></div>
+        <div class="grid-3">
+          <article class="card"><h3>No runtime JavaScript</h3><p>The public site serves pre-rendered HTML and CSS. It does not collect form data, load analytics, or execute a client application.</p></article>
+          <article class="card"><h3>Immutable actions</h3><p>Every external GitHub Action is pinned to a full commit SHA. The artifact is validated before upload.</p></article>
+          <article class="card"><h3>Least privilege</h3><p>Workflow permissions default to none. Source read belongs to the build job; Pages and OIDC write permissions exist only in the deploy job.</p></article>
+        </div>
+      </section>
+
+      <section class="section shell" aria-labelledby="report-title">
+        <div class="section-heading"><p class="eyebrow">Private disclosure</p><h2 id="report-title">Report vulnerabilities without publishing the exploit.</h2></div>
+        <div class="prose">
+          <p>Use <a href="https://github.com/Dhi13man/skivolve/security/advisories/new">GitHub private vulnerability reporting</a>. If private reporting is unavailable, email <a href="mailto:dhiman.seal@hotmail.com?subject=Skivolve%20security%20report">dhiman.seal@hotmail.com</a> with the subject “Skivolve security report.”</p>
+          <p>Include the affected version or commit, threat model, reproduction steps, impact, and suggested mitigation. Remove real credentials, private holdout content, access tokens, personal data, and unnecessary exploit payloads.</p>
+          <p>The normative policy is maintained in <a href="https://github.com/Dhi13man/skivolve/blob/main/SECURITY.md">SECURITY.md</a>.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="shell footer-layout">
+        <div><a class="brand" href="../"><img src="../assets/mark.svg" alt="" width="40" height="40"><span>Skivolve</span></a><p class="muted">Reproducible evaluation of agent skills and instructions.</p></div>
+        <nav class="footer-links" aria-label="Footer navigation"><a href="../docs/">Docs</a><a href="../corpus/">Corpus</a><a href="../faq/">FAQ</a><a href="https://github.com/Dhi13man/skivolve/blob/main/SECURITY.md">Policy</a></nav>
+      </div>
+    </footer>
+  </body>
+</html>

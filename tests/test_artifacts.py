@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from harness_evals.artifacts import (
+from skivolve.artifacts import (
     MAX_ARTIFACT_BYTES,
     ArtifactError,
     normalize_artifact,
@@ -17,7 +17,7 @@ class ArtifactNormalizationTests(unittest.TestCase):
             text.as_evidence(),
             {
                 "byte_count": 14,
-                "canonicalization": "harness-evals-text-lf-v1",
+                "canonicalization": "skivolve-text-lf-v2",
                 "filename": "artifact.txt",
                 "kind": "final_output_text",
                 "media_type": "text/plain; charset=utf-8",

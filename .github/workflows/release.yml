@@ -14,7 +14,7 @@ concurrency:
 jobs:
   authorize:
     name: Authorize release identity
-    if: github.repository == 'Dhi13man/harness-evals'
+    if: github.repository == 'Dhi13man/skivolve'
     permissions:
       checks: read
       contents: read
@@ -57,7 +57,7 @@ jobs:
 
   build:
     name: Build and attest
-    if: github.repository == 'Dhi13man/harness-evals'
+    if: github.repository == 'Dhi13man/skivolve'
     needs: authorize
     permissions:
       attestations: write
@@ -84,7 +84,7 @@ jobs:
           from pathlib import Path
 
           project_version = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
-          module = ast.parse(Path("harness_evals/__init__.py").read_text(encoding="utf-8"))
+          module = ast.parse(Path("skivolve/__init__.py").read_text(encoding="utf-8"))
           module_versions = [
               node.value.value
               for node in module.body
@@ -133,7 +133,7 @@ jobs:
           Path("release-assets/release-notes.md").write_text(notes + "\n", encoding="utf-8")
           PY
           cp dist/* SHA256SUMS release-assets/
-          cp "$ATTESTATION_BUNDLE" "release-assets/harness_evals-${GITHUB_REF_NAME#v}.sigstore.json"
+          cp "$ATTESTATION_BUNDLE" "release-assets/skivolve-${GITHUB_REF_NAME#v}.sigstore.json"
       - name: Upload release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -194,9 +194,9 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           expected="$(printf '%s\n' \
             SHA256SUMS \
-            "harness_evals-$version-py3-none-any.whl" \
-            "harness_evals-$version.sigstore.json" \
-            "harness_evals-$version.tar.gz" \
+            "skivolve-$version-py3-none-any.whl" \
+            "skivolve-$version.sigstore.json" \
+            "skivolve-$version.tar.gz" \
             release-notes.md | sort)"
           observed="$(find release-assets -maxdepth 1 -type f -printf '%f\n' | sort)"
           test "$observed" = "$expected"
@@ -207,11 +207,11 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           gh release create "$GITHUB_REF_NAME" \
-            "release-assets/harness_evals-$version-py3-none-any.whl" \
-            "release-assets/harness_evals-$version.tar.gz" \
+            "release-assets/skivolve-$version-py3-none-any.whl" \
+            "release-assets/skivolve-$version.tar.gz" \
             release-assets/SHA256SUMS \
-            "release-assets/harness_evals-$version.sigstore.json" \
+            "release-assets/skivolve-$version.sigstore.json" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "Harness Evals $version" \
+            --title "Skivolve $version" \
             --notes-file release-assets/release-notes.md \
             --verify-tag

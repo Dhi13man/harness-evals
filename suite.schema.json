@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/Dhi13man/harness-evals/blob/main/suite.schema.json",
-  "title": "Harness Evals instruction-bundle suite",
+  "$id": "https://github.com/Dhi13man/skivolve/blob/main/suite.schema.json",
+  "title": "Skivolve instruction-bundle suite",
   "description": "Manifest for isolated, blinded instruction-bundle evaluations through registered agent-harness providers.",
   "oneOf": [
     {

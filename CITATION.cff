@@ -1,14 +1,14 @@
 cff-version: 1.2.0
-message: If you use Harness Evals in published work, cite this software release.
-title: Harness Evals
+message: If you use Skivolve in published work, cite this software release.
+title: Skivolve
 type: software
-version: 0.3.0
-date-released: 2026-07-13
+version: 0.4.0
+date-released: 2026-07-17
 authors:
   - family-names: Seal
     given-names: Dhiman
-repository-code: https://github.com/Dhi13man/harness-evals
-url: https://github.com/Dhi13man/harness-evals
+repository-code: https://github.com/Dhi13man/skivolve
+url: https://dhi13man.github.io/skivolve/
 license: MIT
 keywords:
   - agent harnesses

@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Getting Started with Skivolve | Agent Skill Evaluation Docs</title>
+    <meta name="description" content="Install Skivolve, validate an evaluation suite, run objective verifiers, and understand the evidence and authority boundaries before a provider-backed run.">
+    <meta name="robots" content="index, follow, max-image-preview:large">
+    <meta name="theme-color" content="#07111f">
+    <link rel="canonical" href="https://dhi13man.github.io/skivolve/docs/">
+    <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="../styles.css">
+    <meta property="og:type" content="article">
+    <meta property="og:site_name" content="Skivolve">
+    <meta property="og:title" content="Getting Started with Skivolve">
+    <meta property="og:description" content="Install the framework, validate a suite, and run your first evidence-bound agent skill evaluation.">
+    <meta property="og:url" content="https://dhi13man.github.io/skivolve/docs/">
+    <meta property="og:image" content="https://dhi13man.github.io/skivolve/assets/og-image.png">
+    <meta property="og:image:alt" content="Skivolve: Evolve agent skills with evidence">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Getting Started with Skivolve">
+    <meta name="twitter:description" content="Install and run a reproducible agent skill evaluation.">
+    <meta name="twitter:image" content="https://dhi13man.github.io/skivolve/assets/og-image.png">
+    <meta name="twitter:image:alt" content="Skivolve: Evolve agent skills with evidence">
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "TechArticle",
+        "headline": "Getting Started with Skivolve",
+        "description": "Install and run a reproducible agent skill evaluation with Skivolve.",
+        "url": "https://dhi13man.github.io/skivolve/docs/",
+        "isPartOf": { "@id": "https://dhi13man.github.io/skivolve/#website" },
+        "about": "Agent skill evaluation"
+      }
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
+    <header class="site-header">
+      <nav class="site-nav shell" aria-label="Main navigation">
+        <a class="brand" href="../"><img src="../assets/mark.svg" alt="" width="40" height="40"><span>Skivolve</span></a>
+        <ul class="nav-links">
+          <li><a href="../#how-it-works">How it works</a></li>
+          <li><a href="../corpus/">Corpus</a></li>
+          <li><a href="./" aria-current="page">Docs</a></li>
+          <li><a href="../security/">Security</a></li>
+          <li><a href="../faq/">FAQ</a></li>
+          <li><a href="https://github.com/Dhi13man/skivolve">GitHub</a></li>
+        </ul>
+      </nav>
+    </header>
+
+    <main id="main-content" tabindex="-1">
+      <header class="page-hero shell">
+        <p class="eyebrow">Documentation · Version 0.4.0</p>
+        <h1>Run your first evidence-bound evaluation.</h1>
+        <p class="lede">Start with an offline dry run. It validates the suite, tools, exact sources, cases, provider locks, and selection before a model is invoked or result artifact is written.</p>
+      </header>
+
+      <div class="section shell content-layout">
+        <nav class="side-nav" aria-label="On this page">
+          <p class="label">On this page</p>
+          <ul>
+            <li><a href="#requirements">Requirements</a></li>
+            <li><a href="#install">Install</a></li>
+            <li><a href="#dry-run">Dry run</a></li>
+            <li><a href="#verifier-only">Verifier-only run</a></li>
+            <li><a href="#suite">Suite contract</a></li>
+            <li><a href="#claims">Claim boundary</a></li>
+          </ul>
+        </nav>
+
+        <article class="prose">
+          <h2 id="requirements">Requirements</h2>
+          <p>The reference suite targets Linux with a working <code>systemd --user</code> manager, unprivileged user and mount namespaces, Python 3.11 or newer, Git, Go, and Node.js. An authenticated provider executable is required only for provider-backed runs.</p>
+          <p>Skivolve runs generated code. Read the <a href="../security/">security model</a> before using proprietary fixtures, private holdouts, or valuable provider credentials.</p>
+
+          <h2 id="install">Install from source</h2>
+          <pre><code>git clone https://github.com/Dhi13man/skivolve.git
+cd skivolve
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[test]"</code></pre>
+          <p>The runtime has one exact third-party Python dependency for RFC 8785 JSON canonicalization. Development, test, build, and fuzz dependencies are maintained in separate hash-locked requirement sets.</p>
+
+          <h2 id="dry-run">Validate without dispatch</h2>
+          <pre><code>skivolve --comparison original-vs-no-skill --dry-run</code></pre>
+          <p>A dry run validates the manifest and selected cases, resolves required tools, binds source variants, checks provider protocol locks, and reports configured call and spend ceilings. Provider validation still requires the configured executable and local runtime prerequisites.</p>
+
+          <h2 id="verifier-only">Run objective verifiers</h2>
+          <pre><code>skivolve \
+  --comparison candidate-vs-original \
+  --verifier-only \
+  --output-dir /tmp/skivolve-verifier</code></pre>
+          <p>This mode skips comparator judgment but still invokes the configured generation provider. It is suitable when the case-specific objective oracle is the intended decision authority. Provider-backed runs can consume metered API spend or subscription quota.</p>
+
+          <h2 id="suite">Understand the suite contract</h2>
+          <p>A suite declares comparison arms, repetitions, task fixtures, bundle sources, verifier commands, execution limits, and—on current schemas—provider adapters, judgment mode, and artifact contracts. The included suite compares a frozen original bundle, the current candidate, and a no-skill control.</p>
+          <ul>
+            <li><strong>Objective-only:</strong> the case verifier decides; no comparator is constructed.</li>
+            <li><strong>Judged:</strong> eligible ambiguity may use a selected, calibrated comparator profile.</li>
+            <li><strong>Artifact contract:</strong> each case selects a workspace diff, final text, or final JSON representation.</li>
+            <li><strong>Source authority:</strong> Git commits, paths, bytes, modes, and context inputs are fingerprinted and rechecked.</li>
+          </ul>
+          <p>Read the authoritative <a href="https://github.com/Dhi13man/skivolve/blob/main/README.md#suite-contract">suite contract</a>, <a href="https://github.com/Dhi13man/skivolve/blob/main/suite.schema.json">manifest schema</a>, and <a href="https://github.com/Dhi13man/skivolve/blob/main/CONTRIBUTING.md">case acceptance checklist</a>.</p>
+
+          <h2 id="claims">Know what a result can claim</h2>
+          <p>A public validation run is not a private holdout. A model-generated answer is not objective verification. A comparator decision is not source authority. Skivolve preserves those distinctions and fails closed when an artifact tries to borrow authority from another layer.</p>
+          <p>A release claim requires a separately stored private suite frozen before candidate evaluation, independent reviewers, a mode-<code>0600</code> sealed plan, declared release comparisons, and a single consumed execution record. Judged claims additionally require fresh live comparator certification.</p>
+          <div class="callout"><strong>Next:</strong> inspect the <a href="../corpus/">reference corpus</a>, trace the <a href="../architecture/">evaluation architecture</a>, or open the <a href="https://github.com/Dhi13man/skivolve">source repository</a>.</div>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="shell footer-layout">
+        <div><a class="brand" href="../"><img src="../assets/mark.svg" alt="" width="40" height="40"><span>Skivolve</span></a><p class="muted">Reproducible evaluation of agent skills and instructions.</p></div>
+        <nav class="footer-links" aria-label="Footer navigation"><a href="../corpus/">Corpus</a><a href="../security/">Security</a><a href="https://github.com/Dhi13man/skivolve/releases">Releases</a><a href="https://github.com/Dhi13man/skivolve/blob/main/LICENSE">MIT license</a></nav>
+      </div>
+    </footer>
+  </body>
+</html>

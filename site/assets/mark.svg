@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Skivolve split and merge evaluation mark</title>
+  <rect width="64" height="64" rx="15" fill="#07111f"/>
+  <path d="M14 17h10c7 0 8 10 15 10h11M14 47h10c7 0 8-10 15-10h11" fill="none" stroke="#5ce1ff" stroke-linecap="round" stroke-width="5"/>
+  <circle cx="14" cy="17" r="4" fill="#f4f7fb"/>
+  <circle cx="14" cy="47" r="4" fill="#f4f7fb"/>
+  <path d="m50 22 6 5-6 5m0 0 6 5-6 5" fill="none" stroke="#f4f7fb" stroke-linecap="round" stroke-linejoin="round" stroke-width="3"/>
+</svg>

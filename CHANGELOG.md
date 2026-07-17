@@ -1,8 +1,32 @@
 # Changelog
 
-All notable changes to Harness Evals are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and package releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+All notable changes to Skivolve are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and package releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.4.0] - 2026-07-17
+
+### Added
+
+- Added a static, accessible GitHub Pages site with crawlable guides, canonical metadata, social previews, structured data, a sitemap, and robots policy.
+- Added a least-privilege, commit-pinned Pages deployment workflow with deterministic site validation before deployment.
+
+### Changed
+
+- Renamed the repository, Python distribution, import package, module entry point, console commands, suite identity, release assets, schemas, documentation, and active protocol namespaces to Skivolve.
+- Moved the project homepage to `https://dhi13man.github.io/skivolve/` and expanded repository metadata for agent skill and instruction evaluation discovery.
+- Bumped the package to `0.4.0` because the public import and command surfaces changed.
+
+### Migration
+
+- Replace the former `harness-evals` distribution and `harness_evals` import with `skivolve`.
+- Replace the former `harness-evals` command with `skivolve`, and `harness-evals-prepare-holdout` with `skivolve-prepare-holdout`.
+- Re-prepare unconsumed holdout plans and do not compare pre-rename artifact evidence as if it used the new canonicalization or source-fingerprint namespaces.
+
+### Security
+
+- Advanced source-fingerprint and text/workspace canonicalization namespaces so renamed evidence cannot be confused with pre-rename bytes.
+- Kept Pages deployment permissions isolated to the deployment job and pinned every external action to an immutable commit.
 
 ## [0.3.0] - 2026-07-13
 
@@ -67,7 +91,8 @@ All notable changes to Harness Evals are documented in this file. The format fol
 - Repository-local `engineering` and `testing` reference bundles for exercising Git-bound comparison variants.
 - CI, CodeQL, OpenSSF Scorecard, Dependabot, issue forms, contribution policy, security reporting, governance, support, and release documentation.
 
-[Unreleased]: https://github.com/Dhi13man/harness-evals/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/Dhi13man/harness-evals/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/Dhi13man/harness-evals/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/Dhi13man/harness-evals/releases/tag/v0.1.0
+[Unreleased]: https://github.com/Dhi13man/skivolve/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Dhi13man/skivolve/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/Dhi13man/skivolve/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/Dhi13man/skivolve/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/Dhi13man/skivolve/releases/tag/v0.1.0

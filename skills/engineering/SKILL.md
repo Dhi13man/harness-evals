@@ -1,6 +1,6 @@
 ---
 name: engineering
-description: Reference software engineering guidance used to exercise Harness Evals without depending on a named external skill.
+description: Reference software engineering guidance used to exercise Skivolve without depending on a named external skill.
 ---
 
 # Engineering Reference Bundle

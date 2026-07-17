@@ -23,9 +23,9 @@ from jsonschema import Draft202012Validator
 HARNESS_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HARNESS_ROOT))
 
-from harness_evals.comparator_runtime import canonical_sha256  # noqa: E402
-import harness_evals.runner as runner_module  # noqa: E402
-from harness_evals import (  # noqa: E402
+from skivolve.comparator_runtime import canonical_sha256  # noqa: E402
+import skivolve.runner as runner_module  # noqa: E402
+from skivolve import (  # noqa: E402
     EvalRunner,
     FakeProvider,
     ManifestError,
@@ -34,7 +34,7 @@ from harness_evals import (  # noqa: E402
     SuiteSpec,
     load_suite,
 )
-from harness_evals.providers import (  # noqa: E402
+from skivolve.providers import (  # noqa: E402
     AgentHandler,
     AgentRequest,
     ClaudeCliProvider,
@@ -43,8 +43,8 @@ from harness_evals.providers import (  # noqa: E402
     ProviderResult,
     SERIALIZED_DIAGNOSTIC,
 )
-from harness_evals.holdout_plan import HoldoutPlanError, load_holdout_plan  # noqa: E402
-from harness_evals.runner import (  # noqa: E402
+from skivolve.holdout_plan import HoldoutPlanError, load_holdout_plan  # noqa: E402
+from skivolve.runner import (  # noqa: E402
     MAX_CODEX_EXECUTABLE_BYTES,
     MAX_EXECUTABLE_BYTES,
     _aggregate,
@@ -61,11 +61,11 @@ from harness_evals.runner import (  # noqa: E402
     _serialized_arm_order,
     _tree_hash,
 )
-from harness_evals.holdout_cli import (  # noqa: E402
+from skivolve.holdout_cli import (  # noqa: E402
     build_parser as build_prepare_parser,
     main as prepare_holdout_main,
 )
-from harness_evals.cli import build_parser, main as run_evals_main  # noqa: E402
+from skivolve.cli import build_parser, main as run_evals_main  # noqa: E402
 
 
 _REAL_BARRIER = threading.Barrier
@@ -258,12 +258,11 @@ class SuiteFixture:
         ):
             shutil.copy2(HARNESS_ROOT / name, self.suite_root / name)
         shutil.copytree(
-            HARNESS_ROOT / "harness_evals",
-            self.suite_root / "harness_evals",
+            HARNESS_ROOT / "skivolve",
+            self.suite_root / "skivolve",
         )
         test_release_path = (
-            self.suite_root
-            / "harness_evals/comparator_calibration/tests/test-release.json"
+            self.suite_root / "skivolve/comparator_calibration/tests/test-release.json"
         )
         test_release = json.loads(test_release_path.read_text(encoding="utf-8"))
         authority_path = self.suite_root / "baseline-authority.json"
@@ -276,7 +275,7 @@ class SuiteFixture:
             + "\n",
             encoding="utf-8",
         )
-        calibration_root = self.suite_root / "harness_evals/comparator_calibration"
+        calibration_root = self.suite_root / "skivolve/comparator_calibration"
         artifacts = test_release["artifacts"]
         artifact_json = {
             "corpus_sha256": "manifest.json",
@@ -315,15 +314,15 @@ class SuiteFixture:
         ).hexdigest()
         runtime_adapter = test_release["runtime_adapter"]
         runtime_sources = {
-            "source_sha256": "harness_evals/comparator_runtime.py",
-            "harness_runner_source_sha256": "harness_evals/runner.py",
-            "artifact_normalizer_source_sha256": "harness_evals/artifacts.py",
-            "provider_source_sha256": "harness_evals/providers.py",
-            "harness_manifest_source_sha256": "harness_evals/manifest.py",
-            "harness_package_source_sha256": "harness_evals/__init__.py",
-            "run_evals_source_sha256": "harness_evals/cli.py",
-            "holdout_plan_source_sha256": "harness_evals/holdout_plan.py",
-            "prepare_holdout_plan_source_sha256": "harness_evals/holdout_cli.py",
+            "source_sha256": "skivolve/comparator_runtime.py",
+            "harness_runner_source_sha256": "skivolve/runner.py",
+            "artifact_normalizer_source_sha256": "skivolve/artifacts.py",
+            "provider_source_sha256": "skivolve/providers.py",
+            "harness_manifest_source_sha256": "skivolve/manifest.py",
+            "harness_package_source_sha256": "skivolve/__init__.py",
+            "run_evals_source_sha256": "skivolve/cli.py",
+            "holdout_plan_source_sha256": "skivolve/holdout_plan.py",
+            "prepare_holdout_plan_source_sha256": "skivolve/holdout_cli.py",
             "baseline_authority_source_sha256": "baseline-authority.json",
         }
         for field, name in runtime_sources.items():
@@ -653,7 +652,7 @@ class SuiteFixture:
     ) -> Path:
         destination = self.suite_root / relative
         shutil.copytree(
-            self.suite_root / "harness_evals" / source_directory,
+            self.suite_root / "skivolve" / source_directory,
             destination,
         )
         descriptor_path = destination / "profile.json"
@@ -775,7 +774,7 @@ class SuiteFixture:
         test_release = json.loads(
             (
                 self.suite_root
-                / "harness_evals/comparator_calibration/tests/test-release.json"
+                / "skivolve/comparator_calibration/tests/test-release.json"
             ).read_text(encoding="utf-8")
         )
         case_bindings = []
@@ -1456,7 +1455,7 @@ class RunnerIntegrationTests(unittest.TestCase):
         sentinel = object()
         constructor = Mock(return_value=sentinel)
         module = SimpleNamespace(CodexAppServerProvider=constructor)
-        with patch.dict(sys.modules, {"harness_evals.codex_app_server": module}):
+        with patch.dict(sys.modules, {"skivolve.codex_app_server": module}):
             self.assertIs(_build_provider(config), sentinel)
         constructor.assert_called_once_with(config)
 
@@ -1564,7 +1563,7 @@ class RunnerIntegrationTests(unittest.TestCase):
     def test_run_cli_closes_manifest_built_runner(self) -> None:
         runner = self.runner()
         with (
-            patch("harness_evals.cli.EvalRunner", return_value=runner),
+            patch("skivolve.cli.EvalRunner", return_value=runner),
             patch("sys.stdout", new=io.StringIO()) as stdout,
         ):
             exit_code = run_evals_main(
@@ -3669,7 +3668,7 @@ print(json.dumps({"passed": passed, "assertions": [{
             raise ProviderError("synthetic post-synchronization failure")
 
         provider = FakeProvider(agent_handler=fail)
-        with patch("harness_evals.runner.threading.Barrier", _StaggeredSecondBarrier):
+        with patch("skivolve.runner.threading.Barrier", _StaggeredSecondBarrier):
             result = self.runner(provider).run(
                 RunSelection(comparison_ids=("without-current",)),
                 output_dir=self.output("post-sync-failure"),
@@ -3984,7 +3983,7 @@ print(json.dumps({"passed": passed, "assertions": [{
         )
         runner = EvalRunner(suite, provider, self.fixture.provider())
         with (
-            patch("harness_evals.runner.os.fsync", side_effect=fail_dispatch_fsync),
+            patch("skivolve.runner.os.fsync", side_effect=fail_dispatch_fsync),
             self.assertRaises(_GeneratorDispatchJournalError),
         ):
             runner.run(
@@ -4040,9 +4039,9 @@ print(json.dumps({"passed": passed, "assertions": [{
 
         provider._agent_handler = agent
         with (
-            patch("harness_evals.runner.os.fsync", side_effect=record_fsync),
+            patch("skivolve.runner.os.fsync", side_effect=record_fsync),
             patch(
-                "harness_evals.runner._fsync_directory",
+                "skivolve.runner._fsync_directory",
                 side_effect=record_directory_fsync,
             ),
         ):
@@ -6056,9 +6055,7 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
         plan = load_holdout_plan(self.plan_path)
         result_root = self.fixture.root / "partial-claim-result"
         result_root.mkdir(mode=0o700)
-        with patch(
-            "harness_evals.runner.os.write", side_effect=OSError("simulated crash")
-        ):
+        with patch("skivolve.runner.os.write", side_effect=OSError("simulated crash")):
             with self.assertRaisesRegex(RunnerError, "persist.*claim"):
                 _claim_holdout_consumption(plan, self.suite, result_root.resolve())
         record_path = Path(self.payload["consumption_record_path"])
@@ -6208,7 +6205,7 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
         runner = self.production_runner()
         output = self.fixture.root / "cli-plan.json"
         with (
-            patch("harness_evals.holdout_cli.EvalRunner", return_value=runner),
+            patch("skivolve.holdout_cli.EvalRunner", return_value=runner),
             patch("sys.stdout", new=io.StringIO()) as stdout,
         ):
             exit_code = prepare_holdout_main(
@@ -6486,7 +6483,7 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
             return data
 
         with (
-            patch("harness_evals.holdout_plan.os.read", side_effect=mutate_after_read),
+            patch("skivolve.holdout_plan.os.read", side_effect=mutate_after_read),
             self.assertRaisesRegex(HoldoutPlanError, "changed while it was read"),
         ):
             load_holdout_plan(self.plan_path)
@@ -6507,9 +6504,7 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
         self.plan_path.chmod(0o600)
 
         ownership_runner = self.runner()
-        with patch(
-            "harness_evals.holdout_plan.os.getuid", return_value=os.getuid() + 1
-        ):
+        with patch("skivolve.holdout_plan.os.getuid", return_value=os.getuid() + 1):
             with self.assertRaisesRegex(HoldoutPlanError, "current uid"):
                 load_holdout_plan(self.plan_path)
             with self.assertRaisesRegex(RunnerError, "current uid"):
@@ -7753,9 +7748,7 @@ class SchemaV3RunnerTests(unittest.TestCase):
     def test_builtin_certification_root_rejects_symlink_before_dispatch(self) -> None:
         self.fixture.use_v3_judged()
         self.fixture.align_builtin_profile_authority()
-        evidence = (
-            self.fixture.suite_root / "harness_evals/comparator_calibration/evidence"
-        )
+        evidence = self.fixture.suite_root / "skivolve/comparator_calibration/evidence"
         evidence.symlink_to(self.fixture.root, target_is_directory=True)
         suite = load_suite(self.fixture.manifest_path)
         provider = self.fixture.provider()
@@ -7777,7 +7770,7 @@ class SchemaV3RunnerTests(unittest.TestCase):
             EvalRunner(suite, injected, injected)
 
         built = self.fixture.provider()
-        with patch("harness_evals.runner._build_provider", return_value=built) as build:
+        with patch("skivolve.runner._build_provider", return_value=built) as build:
             with EvalRunner(suite) as runner:
                 self.assertIsNone(runner.comparator_provider)
         build.assert_called_once_with(suite.provider)
