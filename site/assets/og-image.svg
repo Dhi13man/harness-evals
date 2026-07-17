@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title description">
+  <title id="title">Skivolve</title>
+  <desc id="description">Evolve agent skills with evidence through reproducible evaluation.</desc>
+  <rect width="1200" height="630" fill="#07111f"/>
+  <path d="M0 90H1200M0 180H1200M0 270H1200M0 360H1200M0 450H1200M0 540H1200M120 0V630M240 0V630M360 0V630M480 0V630M600 0V630M720 0V630M840 0V630M960 0V630M1080 0V630" stroke="#142338" stroke-width="1"/>
+  <rect x="74" y="70" width="1052" height="490" rx="34" fill="#0c1929" stroke="#2b3a4f" stroke-width="2"/>
+  <g transform="translate(122 122)">
+    <rect width="82" height="82" rx="20" fill="#07111f"/>
+    <path d="M18 22h13c9 0 10 13 19 13h15M18 60h13c9 0 10-13 19-13h15" fill="none" stroke="#5ce1ff" stroke-linecap="round" stroke-width="6"/>
+    <circle cx="18" cy="22" r="5" fill="#f4f7fb"/>
+    <circle cx="18" cy="60" r="5" fill="#f4f7fb"/>
+    <path d="m65 29 8 6-8 6m0 0 8 6-8 6" fill="none" stroke="#f4f7fb" stroke-linecap="round" stroke-linejoin="round" stroke-width="4"/>
+  </g>
+  <text x="226" y="185" fill="#f4f7fb" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="56" font-weight="700">Skivolve</text>
+  <text x="122" y="306" fill="#f4f7fb" font-family="Georgia, Times New Roman, serif" font-size="72" font-weight="700">Evolve agent skills</text>
+  <text x="122" y="391" fill="#5ce1ff" font-family="Georgia, Times New Roman, serif" font-size="72" font-weight="700">with evidence.</text>
+  <text x="126" y="480" fill="#a8b3c2" font-family="ui-sans-serif, system-ui, sans-serif" font-size="28">Reproducible evaluation of agent skills and instructions</text>
+  <g transform="translate(860 443)">
+    <rect width="210" height="58" rx="29" fill="#5ce1ff"/>
+    <text x="105" y="38" fill="#041017" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="21" font-weight="700">OPEN SOURCE · MIT</text>
+  </g>
+</svg>

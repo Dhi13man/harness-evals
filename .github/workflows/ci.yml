@@ -46,7 +46,7 @@ jobs:
       - name: Check Python formatting
         run: ruff format --check .
       - name: Compile Python
-        run: python -m compileall -q harness_evals cases tests
+        run: python -m compileall -q skivolve cases tests
       - name: Validate JSON syntax
         run: |
           python - <<'PY'
@@ -67,6 +67,8 @@ jobs:
               with path.open(encoding="utf-8") as handle:
                   json.load(handle, object_pairs_hook=lambda pairs: unique(path, pairs))
           PY
+      - name: Validate static site
+        run: python scripts/validate_site.py site
       - name: Check Markdown formatting
         run: npx --no-install prettier --check "**/*.md" --prose-wrap never
       - name: Lint Markdown
@@ -114,7 +116,7 @@ jobs:
       - name: Run harness tests
         run: python -m unittest discover -s tests -v
       - name: Run comparator tests
-        run: python -m unittest discover -s harness_evals/comparator_calibration/tests -v
+        run: python -m unittest discover -s skivolve/comparator_calibration/tests -v
       - name: Run shared verifier tests
         run: python -m unittest discover -s cases/testing/tests -v
 
@@ -189,14 +191,14 @@ jobs:
         run: python tests/run_installed_package_smoke.py --wheel dist/*.whl --sdist dist/*.tar.gz
       - name: Install wheel and smoke test entry points
         run: |
-          python -m venv /tmp/harness-evals-smoke
-          /tmp/harness-evals-smoke/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements/runtime.txt
-          /tmp/harness-evals-smoke/bin/python -m pip install --no-deps dist/*.whl
-          /tmp/harness-evals-smoke/bin/harness-evals --help
-          /tmp/harness-evals-smoke/bin/python -m harness_evals --help
-          /tmp/harness-evals-smoke/bin/harness-evals-prepare-holdout --help
+          python -m venv /tmp/skivolve-smoke
+          /tmp/skivolve-smoke/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements/runtime.txt
+          /tmp/skivolve-smoke/bin/python -m pip install --no-deps dist/*.whl
+          /tmp/skivolve-smoke/bin/skivolve --help
+          /tmp/skivolve-smoke/bin/python -m skivolve --help
+          /tmp/skivolve-smoke/bin/skivolve-prepare-holdout --help
           cd /tmp
-          /tmp/harness-evals-smoke/bin/python "$GITHUB_WORKSPACE/tests/run_installed_package_smoke.py" --cli /tmp/harness-evals-smoke/bin/harness-evals --forbid-root "$GITHUB_WORKSPACE"
+          /tmp/skivolve-smoke/bin/python "$GITHUB_WORKSPACE/tests/run_installed_package_smoke.py" --cli /tmp/skivolve-smoke/bin/skivolve --forbid-root "$GITHUB_WORKSPACE"
       - name: Upload distributions
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

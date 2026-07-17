@@ -29,11 +29,11 @@ from unittest import mock
 HARNESS_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HARNESS_ROOT))
 
-from harness_evals.comparator_runtime import (  # noqa: E402
+from skivolve.comparator_runtime import (  # noqa: E402
     CalibrationError,
     VerifiedExecutable as RuntimeVerifiedExecutable,
 )
-from harness_evals.codex_app_server import (  # noqa: E402
+from skivolve.codex_app_server import (  # noqa: E402
     _ALLOWED_ITEM_TYPES,
     _AppServerProtocol,
     _CleanupPoisonStore,
@@ -53,8 +53,8 @@ from harness_evals.codex_app_server import (  # noqa: E402
     _validate_cli_version_output,
     CodexAppServerProvider,
 )
-from harness_evals.manifest import ProviderConfig  # noqa: E402
-from harness_evals.providers import AgentRequest, ProviderError  # noqa: E402
+from skivolve.manifest import ProviderConfig  # noqa: E402
+from skivolve.providers import AgentRequest, ProviderError  # noqa: E402
 
 
 LOCK_PATH = HARNESS_ROOT / "codex-app-server-lock.json"
@@ -1168,11 +1168,9 @@ class CodexProcessTransportTests(unittest.TestCase):
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
         with (
+            mock.patch("skivolve.codex_app_server.subprocess.run", side_effect=run),
             mock.patch(
-                "harness_evals.codex_app_server.subprocess.run", side_effect=run
-            ),
-            mock.patch(
-                "harness_evals.codex_app_server._SystemdRecoveryProbe.confirm_unit_clean",
+                "skivolve.codex_app_server._SystemdRecoveryProbe.confirm_unit_clean",
                 side_effect=(
                     ProviderError("still active"),
                     "not-found/inactive/empty/gone",
@@ -1243,23 +1241,23 @@ class CodexProcessTransportTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "harness_evals.codex_app_server._resolve_system_tool",
+                "skivolve.codex_app_server._resolve_system_tool",
                 return_value=Path("/usr/bin/systemctl"),
             ),
             mock.patch(
-                "harness_evals.codex_app_server.subprocess.Popen", return_value=process
+                "skivolve.codex_app_server.subprocess.Popen", return_value=process
             ),
-            mock.patch("harness_evals.codex_app_server._attest_process_executable"),
+            mock.patch("skivolve.codex_app_server._attest_process_executable"),
             mock.patch(
-                "harness_evals.codex_app_server.os.set_blocking",
+                "skivolve.codex_app_server.os.set_blocking",
                 side_effect=OSError("fixture failure"),
             ),
             mock.patch(
-                "harness_evals.codex_app_server.subprocess.run",
+                "skivolve.codex_app_server.subprocess.run",
                 return_value=subprocess.CompletedProcess([], 0, "", ""),
             ),
             mock.patch(
-                "harness_evals.codex_app_server._SystemdRecoveryProbe.confirm_unit_clean",
+                "skivolve.codex_app_server._SystemdRecoveryProbe.confirm_unit_clean",
                 return_value="not-found/inactive/empty/gone",
             ),
             self.assertRaises(OSError),
@@ -1287,11 +1285,11 @@ class CodexProcessTransportTests(unittest.TestCase):
         transport._control_group = "/user.slice/test.service"
         with (
             mock.patch(
-                "harness_evals.codex_app_server.subprocess.run",
+                "skivolve.codex_app_server.subprocess.run",
                 return_value=subprocess.CompletedProcess([], 0, "", ""),
             ),
             mock.patch(
-                "harness_evals.codex_app_server._SystemdRecoveryProbe.confirm_unit_clean",
+                "skivolve.codex_app_server._SystemdRecoveryProbe.confirm_unit_clean",
                 return_value="loaded/inactive/control-group/empty",
             ) as confirm,
         ):
@@ -1464,11 +1462,11 @@ class CleanupPoisonStoreTests(unittest.TestCase):
             transport = CodexProcessTransportTests._transport(self.process())
             with (
                 mock.patch(
-                    "harness_evals.codex_app_server.subprocess.run",
+                    "skivolve.codex_app_server.subprocess.run",
                     side_effect=self.inactive_systemctl,
                 ),
                 mock.patch(
-                    "harness_evals.codex_app_server._SystemdRecoveryProbe.confirm_unit_clean",
+                    "skivolve.codex_app_server._SystemdRecoveryProbe.confirm_unit_clean",
                     return_value="not-found/inactive/empty/gone",
                 ),
                 self.assertRaisesRegex(ProviderError, "cleanup could not be confirmed"),
@@ -1493,28 +1491,28 @@ class CleanupPoisonStoreTests(unittest.TestCase):
             self.arm(binding)
             with (
                 mock.patch(
-                    "harness_evals.codex_app_server._resolve_system_tool",
+                    "skivolve.codex_app_server._resolve_system_tool",
                     return_value=Path("/usr/bin/systemctl"),
                 ),
                 mock.patch(
-                    "harness_evals.codex_app_server.subprocess.Popen",
+                    "skivolve.codex_app_server.subprocess.Popen",
                     return_value=process,
                 ),
-                mock.patch("harness_evals.codex_app_server._attest_process_executable"),
+                mock.patch("skivolve.codex_app_server._attest_process_executable"),
                 mock.patch(
-                    "harness_evals.codex_app_server._linux_process_start_time",
+                    "skivolve.codex_app_server._linux_process_start_time",
                     return_value=67890,
                 ),
                 mock.patch(
-                    "harness_evals.codex_app_server._command_sha256",
+                    "skivolve.codex_app_server._command_sha256",
                     return_value=self.COMMAND_SHA256,
                 ),
                 mock.patch(
-                    "harness_evals.codex_app_server.os.set_blocking",
+                    "skivolve.codex_app_server.os.set_blocking",
                     side_effect=OSError("fixture setup failure"),
                 ),
                 mock.patch(
-                    "harness_evals.codex_app_server.subprocess.run",
+                    "skivolve.codex_app_server.subprocess.run",
                     side_effect=self.inactive_systemctl,
                 ),
                 self.assertRaisesRegex(OSError, "fixture setup failure") as raised,
@@ -1797,7 +1795,7 @@ class CleanupPoisonStoreTests(unittest.TestCase):
 
             with (
                 mock.patch(
-                    "harness_evals.codex_app_server.os.write",
+                    "skivolve.codex_app_server.os.write",
                     side_effect=partial_then_fail,
                 ),
                 self.assertRaisesRegex(ProviderError, "publish"),
@@ -1807,7 +1805,7 @@ class CleanupPoisonStoreTests(unittest.TestCase):
 
             with (
                 mock.patch(
-                    "harness_evals.codex_app_server.os.fsync",
+                    "skivolve.codex_app_server.os.fsync",
                     side_effect=OSError("simulated file fsync crash"),
                 ),
                 self.assertRaisesRegex(ProviderError, "publish"),
@@ -1817,7 +1815,7 @@ class CleanupPoisonStoreTests(unittest.TestCase):
 
             with (
                 mock.patch(
-                    "harness_evals.codex_app_server.os.link",
+                    "skivolve.codex_app_server.os.link",
                     side_effect=OSError("simulated link crash"),
                 ),
                 self.assertRaisesRegex(ProviderError, "publish"),
@@ -1839,7 +1837,7 @@ class CleanupPoisonStoreTests(unittest.TestCase):
 
             with (
                 mock.patch(
-                    "harness_evals.codex_app_server.os.unlink",
+                    "skivolve.codex_app_server.os.unlink",
                     side_effect=fail_first_temporary_unlink,
                 ),
                 self.assertRaisesRegex(ProviderError, "finalize"),
@@ -1851,7 +1849,7 @@ class CleanupPoisonStoreTests(unittest.TestCase):
 
             with (
                 mock.patch(
-                    "harness_evals.codex_app_server._fsync_private_directory",
+                    "skivolve.codex_app_server._fsync_private_directory",
                     side_effect=OSError("simulated directory fsync crash"),
                 ),
                 self.assertRaisesRegex(ProviderError, "publish"),
@@ -1872,11 +1870,11 @@ class CleanupPoisonStoreTests(unittest.TestCase):
         )
         with (
             mock.patch(
-                "harness_evals.codex_app_server._resolve_system_tool",
+                "skivolve.codex_app_server._resolve_system_tool",
                 return_value=Path("/usr/bin/systemctl"),
             ),
             mock.patch(
-                "harness_evals.codex_app_server.subprocess.run",
+                "skivolve.codex_app_server.subprocess.run",
                 return_value=subprocess.CompletedProcess([], 0, stdout, ""),
             ),
         ):
@@ -1913,7 +1911,7 @@ class CleanupPoisonStoreTests(unittest.TestCase):
             systemctl="/usr/bin/systemctl", cgroup_root=cgroup_root
         )
         with mock.patch(
-            "harness_evals.codex_app_server.subprocess.run",
+            "skivolve.codex_app_server.subprocess.run",
             return_value=shown("control-group"),
         ) as run:
             state = probe.confirm_unit_clean(
@@ -1935,7 +1933,7 @@ class CleanupPoisonStoreTests(unittest.TestCase):
                 )
                 with (
                     mock.patch(
-                        "harness_evals.codex_app_server.subprocess.run",
+                        "skivolve.codex_app_server.subprocess.run",
                         return_value=shown(kill_mode),
                     ),
                     self.assertRaisesRegex(ProviderError, "not stable"),
@@ -1979,9 +1977,7 @@ class CleanupPoisonStoreTests(unittest.TestCase):
         probe = _SystemdRecoveryProbe(
             systemctl="/usr/bin/systemctl", cgroup_root=cgroup_root
         )
-        with mock.patch(
-            "harness_evals.codex_app_server.subprocess.run", side_effect=run
-        ):
+        with mock.patch("skivolve.codex_app_server.subprocess.run", side_effect=run):
             state = probe.confirm_unit_clean(
                 self.UNIT_NAME,
                 "/user.slice/test.service",
@@ -2005,7 +2001,7 @@ class CleanupPoisonStoreTests(unittest.TestCase):
         )
         with (
             mock.patch(
-                "harness_evals.codex_app_server.subprocess.run",
+                "skivolve.codex_app_server.subprocess.run",
                 return_value=subprocess.CompletedProcess([], 0, stdout, ""),
             ),
             self.assertRaisesRegex(ProviderError, "not stable"),
@@ -2025,7 +2021,7 @@ class CleanupPoisonStoreTests(unittest.TestCase):
             .split(b"\0")
         )
         with mock.patch(
-            "harness_evals.codex_app_server._resolve_system_tool",
+            "skivolve.codex_app_server._resolve_system_tool",
             return_value=Path("/usr/bin/systemctl"),
         ):
             matches = _SystemdRecoveryProbe().matching_command_pids(
@@ -2311,7 +2307,7 @@ class CodexProviderTests(unittest.TestCase):
         roots, create = self.private_copy_factory()
         with (
             mock.patch(
-                "harness_evals.comparator_runtime.tempfile.mkdtemp", side_effect=create
+                "skivolve.comparator_runtime.tempfile.mkdtemp", side_effect=create
             ),
             CodexAppServerProvider(
                 self.config(),
@@ -2808,10 +2804,10 @@ class CodexProviderTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "harness_evals.codex_app_server.VerifiedExecutable", side_effect=capture
+                "skivolve.codex_app_server.VerifiedExecutable", side_effect=capture
             ),
             mock.patch(
-                "harness_evals.comparator_runtime.tempfile.mkdtemp", side_effect=create
+                "skivolve.comparator_runtime.tempfile.mkdtemp", side_effect=create
             ),
             self.assertRaisesRegex(ProviderError, "mode-0600"),
         ):

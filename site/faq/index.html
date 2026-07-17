@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Agent Skill Evaluation FAQ and Terminology | Skivolve</title>
+    <meta name="description" content="Answers about agent skill evaluation, objective verifiers, model judges, AB/BA comparison, Git-bound sources, provider authority, and sealed holdouts.">
+    <meta name="robots" content="index, follow, max-image-preview:large">
+    <meta name="theme-color" content="#07111f">
+    <link rel="canonical" href="https://dhi13man.github.io/skivolve/faq/">
+    <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="../styles.css">
+    <meta property="og:type" content="article">
+    <meta property="og:site_name" content="Skivolve">
+    <meta property="og:title" content="Agent Skill Evaluation FAQ">
+    <meta property="og:description" content="Objective verifiers, blinded comparison, source binding, holdouts, and claim boundaries explained.">
+    <meta property="og:url" content="https://dhi13man.github.io/skivolve/faq/">
+    <meta property="og:image" content="https://dhi13man.github.io/skivolve/assets/og-image.png">
+    <meta property="og:image:alt" content="Skivolve: Evolve agent skills with evidence">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Agent Skill Evaluation FAQ">
+    <meta name="twitter:description" content="The language and limits of reproducible agent skill evaluation.">
+    <meta name="twitter:image" content="https://dhi13man.github.io/skivolve/assets/og-image.png">
+    <meta name="twitter:image:alt" content="Skivolve: Evolve agent skills with evidence">
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "CollectionPage",
+        "name": "Agent Skill Evaluation FAQ and Terminology",
+        "description": "Questions and terminology for reproducible agent skill evaluation.",
+        "url": "https://dhi13man.github.io/skivolve/faq/",
+        "isPartOf": { "@id": "https://dhi13man.github.io/skivolve/#website" }
+      }
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
+    <header class="site-header">
+      <nav class="site-nav shell" aria-label="Main navigation">
+        <a class="brand" href="../"><img src="../assets/mark.svg" alt="" width="40" height="40"><span>Skivolve</span></a>
+        <ul class="nav-links">
+          <li><a href="../#how-it-works">How it works</a></li>
+          <li><a href="../corpus/">Corpus</a></li>
+          <li><a href="../docs/">Docs</a></li>
+          <li><a href="../security/">Security</a></li>
+          <li><a href="./" aria-current="page">FAQ</a></li>
+          <li><a href="https://github.com/Dhi13man/skivolve">GitHub</a></li>
+        </ul>
+      </nav>
+    </header>
+
+    <main id="main-content" tabindex="-1">
+      <header class="page-hero shell">
+        <p class="eyebrow">FAQ · Terminology without fog</p>
+        <h1>What the evaluation proves—and what it does not.</h1>
+        <p class="lede">Agent evaluation language is dangerously easy to overstate. These answers keep objective verification, model judgment, source identity, validation, holdouts, and release claims distinct.</p>
+      </header>
+
+      <section class="section shell" aria-labelledby="product-title">
+        <div class="section-heading"><p class="eyebrow">Skivolve</p><h2 id="product-title">Product and scope</h2></div>
+        <details open><summary>What is Skivolve?</summary><p>Skivolve is an open-source Python framework for reproducible A/B evaluation of agent skills and instruction bundles through agent harnesses. Suites define the observable task, source variants, cases, verifier resources, provider boundaries, and comparison arms.</p></details>
+        <details><summary>Does Skivolve automatically improve a skill?</summary><p>No. It evaluates candidate changes. A separate human or system may propose the candidate, but Skivolve does not claim autonomous self-improvement.</p></details>
+        <details><summary>Is it an LLM benchmark or leaderboard?</summary><p>No. The project does not publish model rankings or claim that one harness or bundle is superior. Its reference corpus demonstrates an evaluation contract.</p></details>
+        <details><summary>Can it evaluate instructions outside software engineering?</summary><p>Yes. A suite may target any instruction bundle with cases that exercise observable behavior. New domains should use objective case verifiers or contribute a separately calibrated comparator profile.</p></details>
+        <details><summary>Why is it an expert Linux alpha?</summary><p>The isolation model depends on Linux user and mount namespaces plus transient <code>systemd --user</code> units. The current release expects operators to understand provider credentials, local runtime prerequisites, and the documented trust boundary.</p></details>
+      </section>
+
+      <section class="section shell" aria-labelledby="method-title">
+        <div class="section-heading"><p class="eyebrow">Method</p><h2 id="method-title">Verifiers, judges, and ordering</h2></div>
+        <details open><summary>What is an objective case verifier?</summary><p>A bounded executable oracle that checks the case’s declared observable behavior. It must accept a known-good implementation and reject known-bad and adversarial variants for the failure modes it claims to detect.</p></details>
+        <details><summary>Why not use a model judge for every result?</summary><p>Model judgment is not an independent oracle for crisp behavior and can leak identity or presentation order. Skivolve uses objective verification first and permits calibrated comparison only for declared ambiguity.</p></details>
+        <details><summary>What does blinded AB/BA comparison mean?</summary><p>The two artifacts are anonymized and presented in both A/B and reversed B/A order. Balanced ordering makes presentation effects visible and reduces—but does not eliminate—judge bias.</p></details>
+        <details><summary>What does calibrated comparison establish?</summary><p>A versioned profile records the rubric, corpus, schemas, model configuration, expected decisions, support by criterion, runtime sources, and limits. Calibration authority remains scoped to that profile and corpus; it is not a universal model-judge guarantee.</p></details>
+        <details><summary>What outputs can a case evaluate?</summary><p>Current schemas support canonical workspace diffs, strict LF-normalized final text, and bounded RFC 8785 canonical final JSON.</p></details>
+      </section>
+
+      <section class="section shell" aria-labelledby="trust-title">
+        <div class="section-heading"><p class="eyebrow">Trust</p><h2 id="trust-title">Source, providers, and holdouts</h2></div>
+        <details open><summary>Why bind evaluation sources to Git?</summary><p>A path or prompt label does not prove what bytes ran. Skivolve fingerprints exact commits, bundle locators, file bytes, executable modes, and context files, then rejects source drift before dispatch.</p></details>
+        <details><summary>Does provider support equal production authority?</summary><p>No. Claude has generation and comparison capabilities under the production contract. Codex app-server is a diagnostic generation adapter. The deterministic fake is test-only. Capability and authority are separate.</p></details>
+        <details><summary>Does the public corpus contain a private holdout?</summary><p>No. It contains train and validation cases. A private release holdout must be stored separately and frozen before candidate evaluation.</p></details>
+        <details><summary>Why is a holdout plan one-shot?</summary><p>Every non-dry attempt consumes the reviewed plan before provider or comparator dispatch, including failed and interrupted runs. This reduces rerun bias and casual leakage, though it is not cryptographic protection against a compromised host.</p></details>
+        <details><summary>Can Skivolve protect against hostile root or kernel compromise?</summary><p>No. The isolation model does not claim protection against malicious root, a compromised kernel, hostile same-UID processes outside the unit, or colluding reviewers. Sensitive holdouts belong on a dedicated trusted host.</p></details>
+      </section>
+
+      <section class="section shell" aria-labelledby="terms-title">
+        <div class="section-heading"><p class="eyebrow">Quick glossary</p><h2 id="terms-title">The nouns that carry authority.</h2></div>
+        <div class="grid-3">
+          <article class="card"><h3>Skill or instruction bundle</h3><p>The versioned source under evaluation—not the evaluator and not the provider.</p></article>
+          <article class="card"><h3>Harness provider</h3><p>The reviewed adapter that invokes an agent runtime under declared capabilities and limits.</p></article>
+          <article class="card"><h3>Case</h3><p>A task, fixture, verifier, resource limit, artifact contract, and set of observable expectations.</p></article>
+          <article class="card"><h3>Validation split</h3><p>Public cases not used as the train split. Still public, and therefore not a private release holdout.</p></article>
+          <article class="card"><h3>Comparator profile</h3><p>A versioned judgment contract with locked resources, calibration support, provider identity, and authority scope.</p></article>
+          <article class="card"><h3>Evidence gate</h3><p>A required observation that must close at its own authority layer before the claim may proceed.</p></article>
+        </div>
+        <div class="button-row button-row-spaced"><a class="button button-primary" href="../docs/">Start with the docs</a><a class="button" href="../architecture/">Trace the architecture</a></div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="shell footer-layout">
+        <div><a class="brand" href="../"><img src="../assets/mark.svg" alt="" width="40" height="40"><span>Skivolve</span></a><p class="muted">Reproducible evaluation of agent skills and instructions.</p></div>
+        <nav class="footer-links" aria-label="Footer navigation"><a href="../docs/">Docs</a><a href="../corpus/">Corpus</a><a href="../security/">Security</a><a href="https://github.com/Dhi13man/skivolve/discussions">Discussions</a></nav>
+      </div>
+    </footer>
+  </body>
+</html>

@@ -4,7 +4,7 @@
 
 ## Intent
 
-Harness Evals must allow non-engineering suites, independently calibrated comparators, new reviewed provider adapters, configurable instruction-bundle layouts, and output-oriented artifact evaluation without weakening source binding, blinding, isolation, spend accounting, cleanup, or release authority.
+Skivolve must allow non-engineering suites, independently calibrated comparators, new reviewed provider adapters, configurable instruction-bundle layouts, and output-oriented artifact evaluation without weakening source binding, blinding, isolation, spend accounting, cleanup, or release authority.
 
 The work ships as six stacked pull requests. Each pull request owns one public or trust contract, contains independently useful commits, and passes every repository gate. Once dependent pull requests merge, rollback proceeds in reverse dependency order unless a forward compatibility change explicitly restores an earlier contract.
 
@@ -32,9 +32,9 @@ The work ships as six stacked pull requests. Each pull request owns one public o
 
 ## Current Constraints
 
-- `harness_evals/comparator_runtime.py` resolves one software-engineering calibration bundle from package-directory assumptions.
-- `harness_evals/runner.py` also resolves comparator resources relative to the suite checkout and binds frozen-original authority to the comparator release.
-- `harness_evals/manifest.py` and `harness_evals/runner.py` branch on `claude`, `codex`, and `fake` provider kinds.
+- `skivolve/comparator_runtime.py` resolves one software-engineering calibration bundle from package-directory assumptions.
+- `skivolve/runner.py` also resolves comparator resources relative to the suite checkout and binds frozen-original authority to the comparator release.
+- `skivolve/manifest.py` and `skivolve/runner.py` branch on `claude`, `codex`, and `fake` provider kinds.
 - Source material assumes `skills/<id>/SKILL.md`; shared verifier material assumes `cases/testing/_shared`.
 - Holdout plan schema v2 seals candidate/original names instead of generic variant source bindings.
 - Comparator inputs and verifier execution primarily assume a workspace-diff artifact.
@@ -199,13 +199,13 @@ PR 1 establishes package-safe profile identity and comparator absence. PR 2 make
 Every commit must leave its branch runnable. Every PR must pass:
 
 - Behavior and contract tests ship in the same commit as the behavior they prove; later `test(...)` commits add only independent cross-contract or distribution evidence.
-- Every commit that changes release-pinned code or data enumerates every affected registered profile, regenerates its production/test lock pair, reproduces each lock independently, verifies the changed source or resource is covered, and rejects missing, orphaned, or duplicate profile locks. The v0.2 compatibility profile retains `harness_evals/comparator_calibration/release.json` and `harness_evals/comparator_calibration/tests/test-release.json` as migration inputs until their documented successor paths ship.
+- Every commit that changes release-pinned code or data enumerates every affected registered profile, regenerates its production/test lock pair, reproduces each lock independently, verifies the changed source or resource is covered, and rejects missing, orphaned, or duplicate profile locks. The v0.2 compatibility profile retains `skivolve/comparator_calibration/release.json` and `skivolve/comparator_calibration/tests/test-release.json` as migration inputs until their documented successor paths ship.
 
 - `ruff check .`
 - `ruff format --check .`
-- `python -m compileall -q harness_evals cases tests`
+- `python -m compileall -q skivolve cases tests`
 - `python -m unittest discover -s tests -v`
-- `python -m unittest discover -s harness_evals/comparator_calibration/tests -v`
+- `python -m unittest discover -s skivolve/comparator_calibration/tests -v`
 - `python -m unittest discover -s cases/testing/tests -v`
 - JSON duplicate-key and schema validation.
 - Prettier with `--prose-wrap never` and markdownlint on every changed Markdown file.

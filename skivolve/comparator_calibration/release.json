@@ -1,0 +1,198 @@
+{
+  "schema_version": 2,
+  "release_id": "software-engineering-comparator-reference-cli-v2.3",
+  "test_release": false,
+  "artifacts": {
+    "profile_descriptor_sha256": "4611179d4f458f3364844013998060e60cbfab990b71cc17fc4981f8afad38ca",
+    "corpus_sha256": "aa1f0e16c8025d5489bcbae0774ea8e7de52d50bf0aec9073d3810f53960385b",
+    "manifest_schema_sha256": "5ea07dd9a106e00178099a81f12d1bb521b089c934c08ed406aa566c02cc4eff",
+    "rubric_sha256": "32eed2046b37396da8e535352b9509f0f59b5d2494d44d105b89c18631dd24e3",
+    "request_template_sha256": "da332f0e366a514cb43e9a1de75fae45d76223cc944266ce133e869009347868",
+    "system_prompt_sha256": "b4a34cc2b92111a31a920f0508b390b1d6bd4180955573c1c43b0fd4587127f1",
+    "response_schema_sha256": "4cae294c93d4fb52d6c7c91833cc52de62c200f8be21e23604eb6456e8489bfa",
+    "evidence_schema_sha256": "61f2ece9cec3321d71c7babf0b3ab98ea949007bc07943aaf6c236a92f64d4e9",
+    "semantic_contract_sha256": "7890c43a7aa77ab128d3eae51c3a9eadbabdab51d6f0d5ef5223fbae80d1d1eb",
+    "holdout_plan_schema_sha256": "6eadbc35e45d5d53c72014ed645128e4e40c6955b1e0eca5112ee9f252cfa89f",
+    "holdout_plan_schema_bytes_sha256": "c3a925885682fa7922b8470f763bba6bdba0e7c6e2679fec1f13a7b0340b172e",
+    "reviewer_a_sha256": "02cd6fab6a9a8e0ee7ea47ec89ba721d511d22e77d0c5dc7a06dad42b61f9ed4",
+    "reviewer_b_sha256": "2cb68dee2b90ddf46a0783a50cb9b0fb298be9d05b02925a5b0d62ca1e0b226b",
+    "re_review_sha256": "41aaa67e27cc76f4bd4549dc5f6f26fdbfb39e89e9d13b5c19fca2d5a4bcfce1",
+    "resolution_sha256": "40ca928829a3561484cbf526562e70386a4929d4e6b269d1820ff5cad63fdc99",
+    "scoring_gold_sha256": "8b1479b348431ebbf202e39b56f489ead3f5f608acf86bcfdd1ba8492faba96e"
+  },
+  "evaluator": {
+    "version": "2.3.0",
+    "source_sha256": "c88c5aca50d1bc876f4afffa373230939b224846e6390ad33e1d5c60fc395219",
+    "collector_source_sha256": "8f7b5c814e7ee7823f016745b77cb3e83591ff3be70f9721616affacbf814a01",
+    "certifier_source_sha256": "0bbcad94a16a93a523d447eb8a95cd4569c4551949ab7fafac171aef00569f2b"
+  },
+  "judge": {
+    "provider": "claude-cli",
+    "provider_version": "2.1.198 (Claude Code)",
+    "requested_model": "claude-sonnet-5",
+    "required_primary_model_prefix": "claude-sonnet-5",
+    "allowed_auxiliary_model_prefixes": [
+      "claude-haiku"
+    ]
+  },
+  "sampling": {
+    "sentinel_repetitions": 3,
+    "ordinary_repetitions": 1,
+    "cli_args": [
+      "--print",
+      "--output-format",
+      "json",
+      "--model",
+      "claude-sonnet-5",
+      "--effort",
+      "high",
+      "--max-budget-usd",
+      "1.00",
+      "--no-session-persistence",
+      "--safe-mode",
+      "--disable-slash-commands",
+      "--strict-mcp-config",
+      "--mcp-config",
+      "{}",
+      "--tools",
+      ""
+    ]
+  },
+  "execution_limits": {
+    "timeout_seconds": 300,
+    "per_invocation_max_usd": 1.0,
+    "run_max_usd": 100.0,
+    "expected_call_count": 100
+  },
+  "criterion_support": {
+    "functional_correctness": {
+      "sample_size": 13,
+      "status": "one-sided",
+      "calibration_claim": "one-sided-detection",
+      "decisive_sample_size": 1,
+      "production_decisive": false,
+      "production_policy": "tie-only-until-calibration-support-expands",
+      "canonical_counts": {
+        "A": 1,
+        "B": 0,
+        "tie": 12
+      },
+      "presented_counts": {
+        "A": 1,
+        "B": 1,
+        "tie": 24
+      }
+    },
+    "security_reliability": {
+      "sample_size": 13,
+      "status": "not-calibrated",
+      "calibration_claim": "tie-discipline-only",
+      "decisive_sample_size": 0,
+      "production_decisive": false,
+      "production_policy": "tie-only-until-calibration-support-expands",
+      "canonical_counts": {
+        "A": 0,
+        "B": 0,
+        "tie": 13
+      },
+      "presented_counts": {
+        "A": 0,
+        "B": 0,
+        "tie": 26
+      }
+    },
+    "maintainability_extensibility": {
+      "sample_size": 13,
+      "status": "bidirectional",
+      "calibration_claim": "bidirectional-discrimination",
+      "decisive_sample_size": 5,
+      "production_decisive": true,
+      "production_policy": "bidirectional-gold-support",
+      "canonical_counts": {
+        "A": 3,
+        "B": 2,
+        "tie": 8
+      },
+      "presented_counts": {
+        "A": 5,
+        "B": 5,
+        "tie": 16
+      }
+    },
+    "performance_efficiency": {
+      "sample_size": 13,
+      "status": "bidirectional",
+      "calibration_claim": "bidirectional-discrimination",
+      "decisive_sample_size": 3,
+      "production_decisive": true,
+      "production_policy": "bidirectional-gold-support",
+      "canonical_counts": {
+        "A": 2,
+        "B": 1,
+        "tie": 10
+      },
+      "presented_counts": {
+        "A": 3,
+        "B": 3,
+        "tie": 20
+      }
+    },
+    "simplicity_scope_discipline": {
+      "sample_size": 13,
+      "status": "one-sided",
+      "calibration_claim": "one-sided-detection",
+      "decisive_sample_size": 7,
+      "production_decisive": true,
+      "production_policy": "ab-ba-balanced-one-sided-support-at-least-five",
+      "canonical_counts": {
+        "A": 0,
+        "B": 7,
+        "tie": 6
+      },
+      "presented_counts": {
+        "A": 7,
+        "B": 7,
+        "tie": 12
+      }
+    }
+  },
+  "invocation_namespace_sha256": "12d2271abe4a3899998c98515df115583bb432fd99e51d0964f75fe25b98387e",
+  "acceptance": {
+    "minimum_outcome_balanced_accuracy": 0.8,
+    "minimum_outcome_cohen_kappa": 0.8,
+    "minimum_eligibility_accuracy": 0.9,
+    "minimum_requirement_status_accuracy": 0.95,
+    "minimum_violation_set_accuracy": 0.95,
+    "minimum_per_criterion_balanced_accuracy": 0.8,
+    "require_zero_order_disagreements": true,
+    "require_zero_sentinel_instability": true,
+    "require_zero_critical_hard_outcome_failures": true,
+    "require_zero_critical_hard_admissibility_errors": true,
+    "require_zero_length_bias_failures": true,
+    "require_zero_unsupported_performance": true,
+    "require_zero_unsupported_qualitative": true,
+    "require_zero_spend_limit_failures": true,
+    "require_stable_model_set": true,
+    "require_stable_executable": true
+  },
+  "runtime_adapter": {
+    "id": "shared-harness-claude-cli-v1",
+    "source_sha256": "b05b2f4378cff6551a215796839e3be38035c7cdba1854ab26ddfa2c4c25da58",
+    "harness_runner_source_sha256": "8bf77b4721af40d5cf02aa6e42213b8ac055b8aebea5dfdc3e741b9c6d240449",
+    "artifact_normalizer_source_sha256": "8261b249169002cf310d78048dcb4a9765cb52ab4c8ae09fc530705571510fb6",
+    "provider_source_sha256": "1197cd71d521552082c7d24b4ac131c5d9403700cf21506ea23e42f4ba005fc5",
+    "profile_registry_source_sha256": "3fe400f690141c481119b246396ba70d98432d679c246ff97613845f0dc430ea",
+    "provider_capability_registry_source_sha256": "d0c09ed8df6b8ab2704045e71f7d7719c4d3639e028d156f7a6e58783661a3a5",
+    "harness_manifest_source_sha256": "519d1d8c420e59de7a23369fc38d5fa850bfda65ce6b2a9677fb9c3e7c0ee5af",
+    "harness_package_source_sha256": "075fd1a280fb0196babe94f7db4a242c698ad1fa33c79783d1f4a891cf1da73b",
+    "run_evals_source_sha256": "ffdf042bc961431656788aa2ea9bb176990148283a5aa722fa74cdb4d3eea536",
+    "holdout_plan_source_sha256": "48df189dc9e9ea7b0bc29beef6ac7cda11c64105183fe40df08e5fd1cc5cd2b1",
+    "prepare_holdout_plan_source_sha256": "e71970bfc6431d77cbdeca42f2a4986482c2879cf4c0dbc54406793a33d995cc",
+    "baseline_authority_source_sha256": "ea291e85d74daa9539cca09d137d85144c77c3f768b642e3f10d227722f4ed98",
+    "frozen_original_commit": "21db6fdad124c2b0769dee6466a23ebddc0264bd",
+    "shared_harness_compatible": true,
+    "blocker": null
+  },
+  "gold_source": "scoring_gold",
+  "trust_boundary_note": "This release lock detects accidental artifact, frozen-baseline, prompt, schema, provider, and evaluator drift only when these release bytes and the executing code are trusted; it is not a signature and cannot prevent an attacker from forging JSON and recomputing every untrusted hash."
+}

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/Dhi13man/harness-evals/blob/main/holdout-plan.schema.json",
+  "$id": "https://github.com/Dhi13man/skivolve/blob/main/holdout-plan.schema.json",
   "$defs": {
     "adapterBinding": {
       "additionalProperties": false,
@@ -837,6 +837,6 @@
       ]
     }
   ],
-  "title": "Harness Evals sealed holdout plan",
+  "title": "Skivolve sealed holdout plan",
   "type": "object"
 }

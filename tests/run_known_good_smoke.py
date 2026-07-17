@@ -14,7 +14,7 @@ import sys
 SUITE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SUITE_ROOT))
 
-from harness_evals import EvalRunner, FakeProvider, RunSelection, load_suite  # noqa: E402
+from skivolve import EvalRunner, FakeProvider, RunSelection, load_suite  # noqa: E402
 
 
 TEST_TARGETS = {

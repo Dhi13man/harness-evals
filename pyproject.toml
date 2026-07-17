@@ -3,9 +3,9 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "harness-evals"
-version = "0.3.0"
-description = "Reproducible A/B evaluations of skills and instruction bundles through agent harnesses"
+name = "skivolve"
+version = "0.4.0"
+description = "Open-source framework for reproducible A/B evaluation of agent skills and instructions"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -13,7 +13,7 @@ license-files = ["LICENSE"]
 authors = [
   { name = "Dhiman Seal" },
 ]
-keywords = ["a-b-testing", "agent-evaluation", "agent-harnesses", "evals", "instruction-bundles"]
+keywords = ["a-b-testing", "agent-evaluation", "agent-harnesses", "instruction-evaluation", "skill-evaluation"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",
@@ -30,22 +30,23 @@ dependencies = ["rfc8785==0.1.4"]
 test = ["jsonschema==4.26.0", "referencing==0.37.0"]
 
 [project.urls]
-Homepage = "https://github.com/Dhi13man/harness-evals"
-Repository = "https://github.com/Dhi13man/harness-evals"
-Issues = "https://github.com/Dhi13man/harness-evals/issues"
-Changelog = "https://github.com/Dhi13man/harness-evals/blob/main/CHANGELOG.md"
+Homepage = "https://dhi13man.github.io/skivolve/"
+Documentation = "https://dhi13man.github.io/skivolve/docs/"
+Repository = "https://github.com/Dhi13man/skivolve"
+Issues = "https://github.com/Dhi13man/skivolve/issues"
+Changelog = "https://github.com/Dhi13man/skivolve/blob/main/CHANGELOG.md"
 
 [project.scripts]
-harness-evals = "harness_evals.cli:main"
-harness-evals-prepare-holdout = "harness_evals.holdout_cli:main"
+skivolve = "skivolve.cli:main"
+skivolve-prepare-holdout = "skivolve.holdout_cli:main"
 
 [tool.setuptools.packages.find]
-include = ["harness_evals*"]
+include = ["skivolve*"]
 
 [tool.setuptools.package-data]
-"harness_evals" = ["comparator-profile-authority.json"]
-"harness_evals.comparator_calibration" = ["*.json", "README.md", "tests/*.json"]
-"harness_evals.plain_language_calibration" = ["*.json", "tests/*.json"]
+"skivolve" = ["comparator-profile-authority.json"]
+"skivolve.comparator_calibration" = ["*.json", "README.md", "tests/*.json"]
+"skivolve.plain_language_calibration" = ["*.json", "tests/*.json"]
 
 [tool.ruff]
 line-length = 88

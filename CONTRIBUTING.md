@@ -1,6 +1,6 @@
-# Contributing To Harness Evals
+# Contributing To Skivolve
 
-Harness Evals accepts focused changes that improve evaluator correctness, portability, security, calibration quality, or documented usability. Because evaluation defects can create false confidence, changes to cases, oracles, providers, schemas, statistics, or release authority require stronger evidence than ordinary tooling changes.
+Skivolve accepts focused changes that improve evaluator correctness, portability, security, calibration quality, or documented usability. Because evaluation defects can create false confidence, changes to cases, oracles, providers, schemas, statistics, or release authority require stronger evidence than ordinary tooling changes.
 
 ## Before Opening Work
 
@@ -9,8 +9,8 @@ Search existing issues and discussions. Open a proposal before changing a public
 ## Development Setup
 
 ```bash
-git clone https://github.com/Dhi13man/harness-evals.git
-cd harness-evals
+git clone https://github.com/Dhi13man/skivolve.git
+cd skivolve
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install --upgrade pip
@@ -25,9 +25,9 @@ Runtime code must remain compatible with Python 3.11 and use only the standard l
 ```bash
 ruff check .
 ruff format --check .
-python -m compileall -q harness_evals cases tests
+python -m compileall -q skivolve cases tests
 python -m unittest discover -s tests -v
-python -m unittest discover -s harness_evals/comparator_calibration/tests -v
+python -m unittest discover -s skivolve/comparator_calibration/tests -v
 python -m unittest discover -s cases/testing/tests -v
 python cases/software/calibrate.py
 python cases/testing/calibrate.py

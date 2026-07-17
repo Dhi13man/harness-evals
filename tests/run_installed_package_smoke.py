@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+import importlib.util
 import json
 import os
 import stat
@@ -19,12 +20,14 @@ from email.parser import BytesParser
 from pathlib import Path, PurePosixPath
 
 
-AUTHORITY_PATH = "harness_evals/comparator-profile-authority.json"
+AUTHORITY_PATH = "skivolve/comparator-profile-authority.json"
+LEGACY_PACKAGE_PATH = "harness_evals/"
+LEGACY_COMMANDS = ("harness-evals", "harness-evals-prepare-holdout")
 PROFILE_LAYOUTS = {
-    "harness_evals/comparator_calibration/profile.json": {
-        "harness_evals/comparator_calibration/README.md"
+    "skivolve/comparator_calibration/profile.json": {
+        "skivolve/comparator_calibration/README.md"
     },
-    "harness_evals/plain_language_calibration/profile.json": set(),
+    "skivolve/plain_language_calibration/profile.json": set(),
 }
 
 
@@ -121,6 +124,13 @@ def _module_version(raw: bytes, label: str) -> str:
 def _inspect_distributions(wheel: Path, sdist: Path) -> None:
     with zipfile.ZipFile(wheel) as archive:
         wheel_files = set(archive.namelist())
+        legacy_wheel_paths = sorted(
+            path for path in wheel_files if path.startswith(LEGACY_PACKAGE_PATH)
+        )
+        if legacy_wheel_paths:
+            raise RuntimeError(
+                f"wheel retained legacy package paths: {legacy_wheel_paths}"
+            )
         wheel_metadata = [
             path for path in wheel_files if path.endswith(".dist-info/METADATA")
         ]
@@ -130,7 +140,7 @@ def _inspect_distributions(wheel: Path, sdist: Path) -> None:
             archive.read(wheel_metadata[0]), "wheel METADATA"
         )
         wheel_module_version = _module_version(
-            archive.read("harness_evals/__init__.py"), "wheel harness_evals/__init__.py"
+            archive.read("skivolve/__init__.py"), "wheel skivolve/__init__.py"
         )
         wheel_required = set().union(
             *(
@@ -141,6 +151,19 @@ def _inspect_distributions(wheel: Path, sdist: Path) -> None:
         wheel_resource_bytes = {
             path: archive.read(path) for path in wheel_required if path in wheel_files
         }
+        entry_point_files = [
+            path for path in wheel_files if path.endswith(".dist-info/entry_points.txt")
+        ]
+        if len(entry_point_files) != 1:
+            raise RuntimeError("wheel must contain exactly one entry_points.txt file")
+        entry_points = archive.read(entry_point_files[0]).decode("utf-8")
+        retained_commands = [
+            command for command in LEGACY_COMMANDS if f"{command} =" in entry_points
+        ]
+        if retained_commands:
+            raise RuntimeError(
+                f"wheel retained legacy console commands: {retained_commands}"
+            )
     missing_wheel = wheel_required - wheel_files
     if missing_wheel:
         raise RuntimeError(f"wheel omitted package resources: {sorted(missing_wheel)}")
@@ -151,8 +174,17 @@ def _inspect_distributions(wheel: Path, sdist: Path) -> None:
             for member in archive.getmembers()
             if member.isfile() and "/" in member.name
         }
+        legacy_sdist_paths = sorted(
+            path
+            for path in normalized_sdist_files
+            if path.startswith(LEGACY_PACKAGE_PATH)
+        )
+        if legacy_sdist_paths:
+            raise RuntimeError(
+                f"sdist retained legacy package paths: {legacy_sdist_paths}"
+            )
         metadata_member = normalized_sdist_files.get("PKG-INFO")
-        module_member = normalized_sdist_files.get("harness_evals/__init__.py")
+        module_member = normalized_sdist_files.get("skivolve/__init__.py")
         if metadata_member is None or module_member is None:
             raise RuntimeError("sdist omitted package version sources")
         metadata_reader = archive.extractfile(metadata_member)
@@ -161,7 +193,7 @@ def _inspect_distributions(wheel: Path, sdist: Path) -> None:
             raise RuntimeError("sdist package version sources are not regular files")
         sdist_version = _metadata_version(metadata_reader.read(), "sdist PKG-INFO")
         sdist_module_version = _module_version(
-            module_reader.read(), "sdist harness_evals/__init__.py"
+            module_reader.read(), "sdist skivolve/__init__.py"
         )
         sdist_required: set[str] = {AUTHORITY_PATH}
         for profile_path in PROFILE_LAYOUTS:
@@ -222,7 +254,7 @@ def _inspect_distributions(wheel: Path, sdist: Path) -> None:
 
 
 def _write_external_suite(root: Path) -> ExternalSuite:
-    from harness_evals.comparator_profiles import (
+    from skivolve.comparator_profiles import (
         BUILTIN_SOFTWARE_PROFILE_ID,
         resolve_builtin_profile,
     )
@@ -351,15 +383,25 @@ def _write_external_suite(root: Path) -> ExternalSuite:
 
 
 def _run_external_smoke(cli: Path, forbidden_root: Path) -> None:
-    import harness_evals
-    from harness_evals.comparator_profiles import (
+    if importlib.util.find_spec("harness_evals") is not None:
+        raise RuntimeError("installed environment retained the legacy package import")
+    retained_commands = [
+        command for command in LEGACY_COMMANDS if (cli.parent / command).exists()
+    ]
+    if retained_commands:
+        raise RuntimeError(
+            f"installed environment retained legacy console commands: {retained_commands}"
+        )
+
+    import skivolve
+    from skivolve.comparator_profiles import (
         BUILTIN_PLAIN_LANGUAGE_PROFILE_ID,
         BUILTIN_SOFTWARE_PROFILE_ID,
         resolve_builtin_profile,
     )
-    from harness_evals.comparator_runtime import CalibrationError, ComparatorRuntime
+    from skivolve.comparator_runtime import CalibrationError, ComparatorRuntime
 
-    package_path = Path(harness_evals.__file__).resolve()
+    package_path = Path(skivolve.__file__).resolve()
     if package_path.is_relative_to(forbidden_root.resolve()):
         raise RuntimeError(f"smoke imported checkout package: {package_path}")
     plain_language = resolve_builtin_profile(BUILTIN_PLAIN_LANGUAGE_PROFILE_ID)
@@ -386,7 +428,7 @@ def _run_external_smoke(cli: Path, forbidden_root: Path) -> None:
         pass
     else:
         raise RuntimeError("installed test-authority profile loaded for production")
-    with tempfile.TemporaryDirectory(prefix="harness-evals-installed-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="skivolve-installed-") as temporary:
         root = Path(temporary).resolve()
         external = _write_external_suite(root)
         completed = _run(

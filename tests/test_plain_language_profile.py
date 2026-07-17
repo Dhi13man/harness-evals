@@ -6,14 +6,14 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator
 
-from harness_evals.comparator_calibration.calibration import validate_manifest
-from harness_evals.comparator_profiles import (
+from skivolve.comparator_calibration.calibration import validate_manifest
+from skivolve.comparator_profiles import (
     BUILTIN_PLAIN_LANGUAGE_PROFILE_ID,
     ComparatorProfileError,
     resolve_builtin_profile,
     resolve_profile_directory,
 )
-from harness_evals.comparator_runtime import CalibrationError, ComparatorRuntime
+from skivolve.comparator_runtime import CalibrationError, ComparatorRuntime
 
 
 class PlainLanguageProfileTests(unittest.TestCase):

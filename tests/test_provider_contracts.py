@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 from jsonschema import Draft202012Validator
 
-from harness_evals.comparator_runtime import (
+from skivolve.comparator_runtime import (
     CalibrationError,
     SpendLedger,
     canonical_sha256,
@@ -24,14 +24,14 @@ from harness_evals.comparator_runtime import (
 HARNESS_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HARNESS_ROOT))
 
-from harness_evals.holdout_plan import HoldoutPlanError, load_holdout_plan  # noqa: E402
-from harness_evals.manifest import ManifestError, load_suite  # noqa: E402
-from harness_evals.provider_capabilities import (  # noqa: E402
+from skivolve.holdout_plan import HoldoutPlanError, load_holdout_plan  # noqa: E402
+from skivolve.manifest import ManifestError, load_suite  # noqa: E402
+from skivolve.provider_capabilities import (  # noqa: E402
     ProviderCapabilityError,
     capabilities_for,
     reviewed_capabilities,
 )
-from harness_evals.providers import (  # noqa: E402
+from skivolve.providers import (  # noqa: E402
     ComparatorRequest,
     ComparatorResult,
     FakeProvider,
@@ -307,14 +307,14 @@ class ComparatorResultContractTests(unittest.TestCase):
         values = self.fixture() if fixture is None else fixture
         with (
             patch(
-                "harness_evals.providers.validate_response",
+                "skivolve.providers.validate_response",
                 return_value=copy.deepcopy(values["decision"]),
             ),
             patch(
-                "harness_evals.providers.expected_transport_hashes",
+                "skivolve.providers.expected_transport_hashes",
                 return_value=copy.deepcopy(values["expected_hashes"]),
             ),
-            patch("harness_evals.providers.validate_executor_evidence"),
+            patch("skivolve.providers.validate_executor_evidence"),
         ):
             return ComparatorResult(
                 outcome=values["outcome"],  # type: ignore[arg-type]
@@ -330,11 +330,11 @@ class ComparatorResultContractTests(unittest.TestCase):
     ) -> dict[str, object]:
         with (
             patch(
-                "harness_evals.providers.validate_response",
+                "skivolve.providers.validate_response",
                 return_value=copy.deepcopy(result.decision),
             ),
             patch(
-                "harness_evals.providers.expected_transport_hashes",
+                "skivolve.providers.expected_transport_hashes",
                 return_value={
                     key: result.transport[key]
                     for key in (
@@ -344,7 +344,7 @@ class ComparatorResultContractTests(unittest.TestCase):
                     )
                 },
             ),
-            patch("harness_evals.providers.validate_executor_evidence"),
+            patch("skivolve.providers.validate_executor_evidence"),
         ):
             return result.as_json(fixture["request"])  # type: ignore[arg-type,return-value]
 
@@ -532,11 +532,11 @@ class ComparatorResultContractTests(unittest.TestCase):
         object.__setattr__(same_instance_request, "repetition", 3)
         with (
             patch(
-                "harness_evals.providers.validate_response",
+                "skivolve.providers.validate_response",
                 return_value=copy.deepcopy(same_instance_result.decision),
             ),
             patch(
-                "harness_evals.providers.expected_transport_hashes",
+                "skivolve.providers.expected_transport_hashes",
                 return_value={
                     key: same_instance_result.transport[key]
                     for key in (
@@ -546,7 +546,7 @@ class ComparatorResultContractTests(unittest.TestCase):
                     )
                 },
             ),
-            patch("harness_evals.providers.validate_executor_evidence"),
+            patch("skivolve.providers.validate_executor_evidence"),
             self.assertRaisesRegex(ProviderError, "consumption request changed"),
         ):
             same_instance_result.as_json(same_instance_request)  # type: ignore[arg-type]
@@ -649,9 +649,7 @@ class ComparatorResultContractTests(unittest.TestCase):
                 fixture = self.fixture()
                 result = self.result(fixture)
                 with (
-                    patch(
-                        "harness_evals.providers.canonical_sha256", side_effect=failure
-                    ),
+                    patch("skivolve.providers.canonical_sha256", side_effect=failure),
                     self.assertRaises(ProviderError) as caught,
                 ):
                     result.as_json(fixture["request"])  # type: ignore[arg-type]
@@ -660,14 +658,14 @@ class ComparatorResultContractTests(unittest.TestCase):
         fixture = self.fixture()
         with (
             patch(
-                "harness_evals.providers.validate_response",
+                "skivolve.providers.validate_response",
                 return_value=copy.deepcopy(fixture["decision"]),
             ),
             patch(
-                "harness_evals.providers.expected_transport_hashes",
+                "skivolve.providers.expected_transport_hashes",
                 side_effect=AttributeError(sentinel),
             ),
-            patch("harness_evals.providers.validate_executor_evidence"),
+            patch("skivolve.providers.validate_executor_evidence"),
             self.assertRaises(ProviderError) as caught,
         ):
             ComparatorResult(

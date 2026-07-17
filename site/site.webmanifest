@@ -1,0 +1,19 @@
+{
+  "name": "Skivolve",
+  "short_name": "Skivolve",
+  "description": "Reproducible evaluation of agent skills and instructions.",
+  "id": "/skivolve/",
+  "start_url": "/skivolve/",
+  "scope": "/skivolve/",
+  "display": "standalone",
+  "background_color": "#07111f",
+  "theme_color": "#07111f",
+  "icons": [
+    {
+      "src": "assets/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 ---
 name: testing
-description: Reference test-design guidance used to exercise Harness Evals without depending on a named external skill.
+description: Reference test-design guidance used to exercise Skivolve without depending on a named external skill.
 ---
 
 # Testing Reference Bundle

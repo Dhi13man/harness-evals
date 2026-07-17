@@ -1,7 +1,7 @@
 {
   "$schema": "suite.schema.json",
   "schema_version": 2,
-  "suite_id": "harness-evals-software-engineering-v1",
+  "suite_id": "skivolve-software-engineering-v1",
   "seed": 20260710,
   "repository_root": ".",
   "provider": {

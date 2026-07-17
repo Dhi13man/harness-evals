@@ -10,9 +10,9 @@ from importlib import resources as importlib_resources
 from pathlib import Path
 from unittest.mock import patch
 
-import harness_evals as harness_package
-from harness_evals import comparator_calibration, comparator_profiles
-from harness_evals.comparator_profiles import (
+import skivolve as harness_package
+from skivolve import comparator_calibration, comparator_profiles
+from skivolve.comparator_profiles import (
     BUILTIN_PLAIN_LANGUAGE_PROFILE_ID,
     BUILTIN_PROFILE_IDS,
     BUILTIN_SOFTWARE_PROFILE_ID,
@@ -21,7 +21,7 @@ from harness_evals.comparator_profiles import (
     parse_profile_descriptor,
     resolve_builtin_profile,
 )
-from harness_evals.comparator_runtime import CalibrationError, ComparatorRuntime
+from skivolve.comparator_runtime import CalibrationError, ComparatorRuntime
 
 
 class ComparatorProfileTests(unittest.TestCase):
@@ -47,9 +47,7 @@ class ComparatorProfileTests(unittest.TestCase):
                 return profile_root
             return original_files(package)
 
-        return patch(
-            "harness_evals.comparator_profiles.resources.files", side_effect=files
-        )
+        return patch("skivolve.comparator_profiles.resources.files", side_effect=files)
 
     def test_builtin_profile_snapshots_every_release_bound_resource(self) -> None:
         profile = resolve_builtin_profile(BUILTIN_SOFTWARE_PROFILE_ID)
@@ -175,7 +173,7 @@ class ComparatorProfileTests(unittest.TestCase):
             certification_name="certification.json",
         )
         compatibility = ComparatorRuntime.load(
-            project_root / "harness_evals/comparator_calibration"
+            project_root / "skivolve/comparator_calibration"
         )
         try:
             self.assertTrue(packaged.protocol_locks_valid)
@@ -243,7 +241,7 @@ class ComparatorProfileTests(unittest.TestCase):
                 payload["profiles"][0]["authority_scope"] = malformed
                 with (
                     patch(
-                        "harness_evals.comparator_profiles._read_resource_bytes",
+                        "skivolve.comparator_profiles._read_resource_bytes",
                         return_value=self.encode(payload),
                     ),
                     self.assertRaisesRegex(
@@ -344,20 +342,20 @@ class ComparatorProfileTests(unittest.TestCase):
             with zipfile.ZipFile(archive_path, "w") as archive:
                 archive.write(
                     authority_path,
-                    "harness_evals/comparator-profile-authority.json",
+                    "skivolve/comparator-profile-authority.json",
                 )
                 for path in profile_root.rglob("*"):
                     if path.is_file():
                         archive.write(
                             path,
-                            "harness_evals/comparator_calibration/"
+                            "skivolve/comparator_calibration/"
                             + path.relative_to(profile_root).as_posix(),
                         )
             with zipfile.ZipFile(archive_path) as archive:
                 comparator_root = zipfile.Path(
-                    archive, "harness_evals/comparator_calibration/"
+                    archive, "skivolve/comparator_calibration/"
                 )
-                harness_root = zipfile.Path(archive, "harness_evals/")
+                harness_root = zipfile.Path(archive, "skivolve/")
                 original_files = importlib_resources.files
 
                 def files(package: object) -> object:
@@ -368,7 +366,7 @@ class ComparatorProfileTests(unittest.TestCase):
                     return original_files(package)
 
                 with patch(
-                    "harness_evals.comparator_profiles.resources.files",
+                    "skivolve.comparator_profiles.resources.files",
                     side_effect=files,
                 ):
                     resolved = resolve_builtin_profile(BUILTIN_SOFTWARE_PROFILE_ID)

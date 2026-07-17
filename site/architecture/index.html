@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Architecture of Reproducible Agent Evaluation | Skivolve</title>
+    <meta name="description" content="Trace Skivolve's evaluation pipeline from Git-bound skill variants through isolated harness execution, objective oracles, blinded comparison, and evidence gates.">
+    <meta name="robots" content="index, follow, max-image-preview:large">
+    <meta name="theme-color" content="#07111f">
+    <link rel="canonical" href="https://dhi13man.github.io/skivolve/architecture/">
+    <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="../styles.css">
+    <meta property="og:type" content="article">
+    <meta property="og:site_name" content="Skivolve">
+    <meta property="og:title" content="Architecture of Reproducible Agent Evaluation">
+    <meta property="og:description" content="Git-bound variants, isolated execution, objective verifiers, blinded comparison, and evidence gates.">
+    <meta property="og:url" content="https://dhi13man.github.io/skivolve/architecture/">
+    <meta property="og:image" content="https://dhi13man.github.io/skivolve/assets/og-image.png">
+    <meta property="og:image:alt" content="Skivolve: Evolve agent skills with evidence">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Architecture of Reproducible Agent Evaluation">
+    <meta name="twitter:description" content="How Skivolve turns instruction candidates into bounded evidence.">
+    <meta name="twitter:image" content="https://dhi13man.github.io/skivolve/assets/og-image.png">
+    <meta name="twitter:image:alt" content="Skivolve: Evolve agent skills with evidence">
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "TechArticle",
+        "headline": "Architecture of Reproducible Agent Evaluation",
+        "description": "The Skivolve evaluation pipeline from Git-bound skill variants through evidence gates.",
+        "url": "https://dhi13man.github.io/skivolve/architecture/",
+        "isPartOf": { "@id": "https://dhi13man.github.io/skivolve/#website" },
+        "about": "Agent harness evaluation architecture"
+      }
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
+    <header class="site-header">
+      <nav class="site-nav shell" aria-label="Main navigation">
+        <a class="brand" href="../"><img src="../assets/mark.svg" alt="" width="40" height="40"><span>Skivolve</span></a>
+        <ul class="nav-links">
+          <li><a href="../#how-it-works">How it works</a></li>
+          <li><a href="../corpus/">Corpus</a></li>
+          <li><a href="../docs/">Docs</a></li>
+          <li><a href="../security/">Security</a></li>
+          <li><a href="../faq/">FAQ</a></li>
+          <li><a href="https://github.com/Dhi13man/skivolve">GitHub</a></li>
+        </ul>
+      </nav>
+    </header>
+
+    <main id="main-content" tabindex="-1">
+      <header class="page-hero shell">
+        <p class="eyebrow">Architecture · Evidence before claims</p>
+        <h1>A pipeline where each authority stays in its lane.</h1>
+        <p class="lede">Skivolve separates source identity, agent generation, objective verification, comparator judgment, provider capability, spend accounting, and holdout authority. A result advances only when the relevant layer has evidence.</p>
+      </header>
+
+      <section class="section shell" aria-labelledby="flow-title">
+        <div class="section-heading"><p class="eyebrow">Evaluation flow</p><h2 id="flow-title">From exact source to reviewable artifact.</h2></div>
+        <ol class="grid-3 steps" aria-label="Evaluation pipeline stages">
+          <li class="card step"><h3>Strict manifest</h3><p>Duplicate-key rejection and schema validation establish the suite, cases, variants, modes, providers, limits, and artifacts.</p></li>
+          <li class="card step"><h3>Git-bound variants</h3><p>Control, candidate, and no-skill arms resolve to exact, non-identical per-case sources before dispatch.</p></li>
+          <li class="card step"><h3>Provider adapter</h3><p>A reviewed capability registry determines roles, concurrency, sandbox, billing evidence, provenance, and authority scope.</p></li>
+          <li class="card step"><h3>Isolated workspace</h3><p>The harness works on a fixture copy while source, verifier resources, credentials, and unrelated host paths remain separated.</p></li>
+          <li class="card step"><h3>Objective oracle</h3><p>A bounded case verifier evaluates declared behavior against the produced workspace diff, final text, or final JSON.</p></li>
+          <li class="card step"><h3>Eligible comparison</h3><p>Where the suite permits judgment, a locked calibrated profile compares anonymized AB and BA presentations.</p></li>
+          <li class="card step"><h3>Evidence gates</h3><p>Source drift, protocol locks, artifacts, spend, provider provenance, holdout consumption, and certification close independently.</p></li>
+        </ol>
+      </section>
+
+      <section class="section shell" aria-labelledby="authority-title">
+        <div class="section-heading"><p class="eyebrow">Authority map</p><h2 id="authority-title">No output gets to authorize itself.</h2></div>
+        <div class="table-scroll">
+          <table class="corpus-table">
+            <caption class="sr-only">Skivolve authority boundaries</caption>
+            <thead><tr><th scope="col">Question</th><th scope="col">Authority</th><th scope="col">What cannot answer it</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">What source ran?</th><td>Git object and canonical source fingerprint</td><td>Prompt text or provider response</td></tr>
+              <tr><th scope="row">Did behavior pass?</th><td>Case-specific objective verifier</td><td>Compilation alone or model self-report</td></tr>
+              <tr><th scope="row">May ambiguity be judged?</th><td>Suite mode and comparator profile</td><td>Provider name or result field</td></tr>
+              <tr><th scope="row">May this provider act?</th><td>Immutable reviewed capability registry</td><td>Manifest-supplied arbitrary imports</td></tr>
+              <tr><th scope="row">Was spend bounded?</th><td>Dispatch journal and configured ceilings</td><td>Successful calls alone</td></tr>
+              <tr><th scope="row">Can this support a release?</th><td>Private frozen suite, independent review, consumed plan, and required certification</td><td>Public validation scores</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section shell" aria-labelledby="repro-title">
+        <div class="section-heading"><p class="eyebrow">Reproducibility</p><h2 id="repro-title">The run records more than a score.</h2></div>
+        <div class="grid-3">
+          <article class="card"><h3>Identity</h3><p>Suite bytes, case trees, exact commits, per-case bundle sources, runtime adapters, schemas, and release locks.</p></article>
+          <article class="card"><h3>Execution</h3><p>Provider and model identity, requests, dispatch state, time and spend ceilings, output artifact, and verifier outcome.</p></article>
+          <article class="card"><h3>Decision</h3><p>Objective evidence, eligible comparator evidence, AB/BA ordering, calibration support, aggregation, and gate status.</p></article>
+        </div>
+      </section>
+
+      <section class="section shell" aria-labelledby="schema-title">
+        <div class="section-heading"><p class="eyebrow">Compatibility</p><h2 id="schema-title">Schema evolution is separate from package versioning.</h2></div>
+        <div class="prose">
+          <p>The Python package follows Semantic Versioning before 1.0. Manifest schemas, corpus versions, comparator protocols, provider capability revisions, holdout plans, and canonical artifact namespaces are independent public contracts. They change only when their own migration semantics require it.</p>
+          <p>Current schema 7 adds explicit workspace-diff, final-text, and final-JSON artifact contracts. Older supported schemas retain their declared compatibility behavior rather than being silently rewritten.</p>
+          <div class="callout">Inspect the executable architecture in <a href="https://github.com/Dhi13man/skivolve/blob/main/skivolve/runner.py">runner.py</a>, <a href="https://github.com/Dhi13man/skivolve/blob/main/skivolve/manifest.py">manifest.py</a>, and <a href="https://github.com/Dhi13man/skivolve/blob/main/skivolve/comparator_runtime.py">comparator_runtime.py</a>.</div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="shell footer-layout">
+        <div><a class="brand" href="../"><img src="../assets/mark.svg" alt="" width="40" height="40"><span>Skivolve</span></a><p class="muted">Reproducible evaluation of agent skills and instructions.</p></div>
+        <nav class="footer-links" aria-label="Footer navigation"><a href="../docs/">Docs</a><a href="../corpus/">Corpus</a><a href="../security/">Security</a><a href="https://github.com/Dhi13man/skivolve">Source</a></nav>
+      </div>
+    </footer>
+  </body>
+</html>

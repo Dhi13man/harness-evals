@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security vulnerability
-    url: https://github.com/Dhi13man/harness-evals/security/advisories/new
+    url: https://github.com/Dhi13man/skivolve/security/advisories/new
     about: Report vulnerabilities privately.
   - name: Usage and design discussion
-    url: https://github.com/Dhi13man/harness-evals/discussions
+    url: https://github.com/Dhi13man/skivolve/discussions
     about: Ask setup questions or discuss evaluation design without sensitive data.

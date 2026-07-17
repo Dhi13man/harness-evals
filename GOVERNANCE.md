@@ -1,6 +1,6 @@
 # Governance
 
-Harness Evals is currently a maintainer-led project. Dhiman Seal is the initial maintainer and release authority.
+Skivolve is currently a maintainer-led project. Dhiman Seal is the initial maintainer and release authority.
 
 The maintainer owns roadmap decisions, contributor access, release publication, security response, and final acceptance of changes. Decisions prioritize evaluator correctness, security, reproducibility, portability, simplicity, and maintenance cost in that order when tradeoffs cannot be eliminated.
 

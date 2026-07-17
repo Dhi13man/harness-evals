@@ -5,8 +5,8 @@ import sys
 
 import atheris
 
-with atheris.instrument_imports(include=["harness_evals.artifacts", "rfc8785"]):
-    from harness_evals.artifacts import ArtifactError, normalize_artifact
+with atheris.instrument_imports(include=["skivolve.artifacts", "rfc8785"]):
+    from skivolve.artifacts import ArtifactError, normalize_artifact
 
 
 @atheris.instrument_func
