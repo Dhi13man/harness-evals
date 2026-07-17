@@ -259,7 +259,7 @@ class SoftwareCalibrationExpectationTests(unittest.TestCase):
             "adversarial/absolute-home-residue": ("path-containment",),
             "adversarial/aggregate-limit-slack": ("declared-resource-limits",),
             "adversarial/clobber-publication-race": ("publication-failure-atomicity",),
-            "adversarial/delayed-256-entry-rejection": (
+            "adversarial/delayed-384-entry-rejection": (
                 "declared-resource-limits",
                 "bounded-entry-consumption",
             ),

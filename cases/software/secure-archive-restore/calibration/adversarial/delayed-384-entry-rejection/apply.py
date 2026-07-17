@@ -28,6 +28,6 @@ if source.count(constant) != 1 or source.count(loop) != 1:
     raise RuntimeError("lazy-good entry-bound implementation changed")
 source = source.replace(
     constant,
-    "MAX_ENTRIES = 128\nDELAYED_ENTRY_CHECK = 256\n",
+    "MAX_ENTRIES = 128\nDELAYED_ENTRY_CHECK = 384\n",
 )
 target.write_text(source.replace(loop, replacement), encoding="utf-8")
