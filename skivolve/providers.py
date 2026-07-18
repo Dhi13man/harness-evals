@@ -7,10 +7,12 @@ import hashlib
 import json
 import math
 import os
+import platform
 import re
 import secrets
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -21,11 +23,16 @@ from typing import Any, Callable, Protocol
 from skivolve.comparator_runtime import (
     CalibrationError,
     ComparatorRuntime,
+    MAX_RESPONSE_BYTES,
+    MAX_STDERR_BYTES,
+    SANDBOX_ISOLATION_PROPERTIES,
     SandboxedClaudeExecutor,
     SpendLedger,
     TransportExecution,
+    TransportOverflowError,
     VerifiedExecutable,
     canonical_sha256,
+    execute_bounded_transport,
     expected_transport_hashes,
     parse_raw_provider_response,
     validate_executor_evidence,
@@ -892,6 +899,8 @@ class ClaudeCliProvider:
     _TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
     _SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     _MAX_CREDENTIAL_BYTES = 1024 * 1024
+    _MINIMUM_AGENT_SANDBOX_VERSION = (2, 1, 187)
+    _SECCOMP_PATH_ENV = "SKIVOLVE_CLAUDE_SECCOMP_APPLY_PATH"
 
     def __init__(self, config: ProviderConfig) -> None:
         if config.kind != "claude":
@@ -901,6 +910,9 @@ class ClaudeCliProvider:
         self._config = config
         self._executable = _resolve_executable(config.executable)
         self._closed = False
+        self._agent_seccomp_lock = threading.Lock()
+        self._verified_agent_seccomp: VerifiedExecutable | None = None
+        self._agent_seccomp_canary: dict[str, Any] | None = None
         try:
             self._verified_executable = VerifiedExecutable(Path(self._executable))
         except (CalibrationError, OSError) as exc:
@@ -946,6 +958,10 @@ class ClaudeCliProvider:
         if self._closed:
             return
         self._closed = True
+        if self._verified_agent_seccomp is not None:
+            self._verified_agent_seccomp.close()
+            self._verified_agent_seccomp = None
+            self._agent_seccomp_canary = None
         self._verified_executable.close()
 
     def _ensure_open(self) -> None:
@@ -1050,21 +1066,39 @@ class ClaudeCliProvider:
     ) -> ProviderResult:
         if request.model != self._config.model:
             raise ProviderError("agent request model differs from configured model")
+        self._require_agent_sandbox_version()
+        seccomp = self._agent_seccomp()
         try:
             self._verified_executable.ensure_source_unchanged()
+            seccomp.ensure_source_unchanged()
         except (CalibrationError, OSError) as exc:
-            raise ProviderError(f"Claude CLI executable drifted: {exc}") from exc
+            raise ProviderError(
+                f"Claude agent runtime executable drifted: {exc}"
+            ) from exc
         runtime_mount = self._runtime_mountpoint()
         _host_home, _host_bin, _host_executable = self._prepare_runtime(runtime_root)
         runtime_home = runtime_mount / "home"
         runtime_bin = runtime_mount / "bin"
         runtime_executable = runtime_bin / "claude"
+        runtime_seccomp = runtime_bin / "apply-seccomp"
         command = self._base_command(
             executable=runtime_executable,
             model=request.model,
             budget=self._config.max_budget_usd,
             permission_mode="acceptEdits",
-            tools="Read,Edit,Write,Bash,Glob,Grep",
+            tools="Read,Edit,Write,Bash",
+        )
+        agent_settings = self._agent_settings(runtime_home, runtime_seccomp)
+        command.extend(
+            [
+                "--settings",
+                json.dumps(
+                    agent_settings,
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+            ]
         )
         runtime_workspace = runtime_root / "work"
         runtime_workspace.mkdir()
@@ -1093,6 +1127,8 @@ class ClaudeCliProvider:
                 "-p",
                 "BindReadOnlyPaths="
                 f"{self._verified_executable.execution_path}:{runtime_executable}",
+                "-p",
+                f"BindReadOnlyPaths={seccomp.execution_path}:{runtime_seccomp}",
             ]
         )
         tool_properties, tool_dirs = self._runtime_tool_bindings(
@@ -1121,7 +1157,7 @@ class ClaudeCliProvider:
                 *command,
             ]
         )
-        sandbox = self._sandbox_evidence(wrapped)
+        sandbox = self._sandbox_evidence(wrapped, agent_settings)
         payload, duration = self._execute(
             wrapped,
             prompt=request.prompt,
@@ -1229,6 +1265,8 @@ class ClaudeCliProvider:
             format(budget, ".12g"),
             "--no-session-persistence",
             "--safe-mode",
+            "--setting-sources",
+            "",
             "--disable-slash-commands",
             "--strict-mcp-config",
             "--permission-mode",
@@ -1239,6 +1277,139 @@ class ClaudeCliProvider:
         if tools:
             command.extend(["--allowed-tools", tools])
         return command
+
+    def _require_agent_sandbox_version(self) -> None:
+        match = re.fullmatch(
+            r"(\d+)\.(\d+)\.(\d+)(?: \(Claude Code\))?",
+            self._version.strip(),
+        )
+        if match is None:
+            raise ProviderError(
+                "cannot verify Claude CLI support for agent credential isolation"
+            )
+        observed = tuple(int(part) for part in match.groups())
+        if observed < self._MINIMUM_AGENT_SANDBOX_VERSION:
+            required = ".".join(
+                str(part) for part in self._MINIMUM_AGENT_SANDBOX_VERSION
+            )
+            raise ProviderError(
+                f"Claude CLI {required} or newer is required for agent credential "
+                "isolation"
+            )
+
+    def _agent_seccomp(self) -> VerifiedExecutable:
+        with self._agent_seccomp_lock:
+            if self._verified_agent_seccomp is not None:
+                self._verified_agent_seccomp.ensure_source_unchanged()
+                return self._verified_agent_seccomp
+            path = _resolve_agent_seccomp_executable(
+                self._executable,
+                environment_variable=self._SECCOMP_PATH_ENV,
+            )
+            try:
+                verified = VerifiedExecutable(path)
+            except (CalibrationError, OSError) as exc:
+                raise ProviderError(
+                    f"cannot attest Claude Unix-socket seccomp helper: {exc}"
+                ) from exc
+            try:
+                canary = self._probe_agent_seccomp(verified)
+            except BaseException:
+                verified.close()
+                raise
+            self._verified_agent_seccomp = verified
+            self._agent_seccomp_canary = canary
+            return self._verified_agent_seccomp
+
+    @staticmethod
+    def _probe_agent_seccomp(verified: VerifiedExecutable) -> dict[str, Any]:
+        source = (
+            "import errno,socket\n"
+            "try:\n"
+            " socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)\n"
+            "except OSError as error:\n"
+            " if error.errno != errno.EPERM: raise\n"
+            " print('af-unix-blocked')\n"
+            "else:\n"
+            " raise SystemExit(3)\n"
+        )
+        try:
+            result = execute_bounded_transport(
+                [verified.descriptor_path, sys.executable, "-c", source],
+                cwd=Path.cwd(),
+                stdin_bytes=b"",
+                timeout_seconds=10,
+                stdout_limit=4096,
+                stderr_limit=4096,
+                terminate=lambda: None,
+                evidence={"kind": "seccomp-canary"},
+                process_label="Claude Unix-socket seccomp canary",
+            )
+        except (CalibrationError, OSError) as exc:
+            raise ProviderError(f"Claude seccomp canary failed: {exc}") from exc
+        if result.returncode != 0 or result.stdout.strip() != b"af-unix-blocked":
+            raise ProviderError(
+                "Claude seccomp canary did not deny AF_UNIX socket creation"
+            )
+        return {
+            "af_unix_socket_creation_denied": True,
+            "stdout_sha256": hashlib.sha256(result.stdout).hexdigest(),
+        }
+
+    def authority_runtime_provenance(self, role: str) -> dict[str, Any]:
+        if role == "generation":
+            seccomp = self._agent_seccomp()
+            return {
+                "agent_sandbox_minimum_version": ".".join(
+                    str(part) for part in self._MINIMUM_AGENT_SANDBOX_VERSION
+                ),
+                "sandbox_kind": capabilities_for("claude-cli").sandbox_kind,
+                "seccomp_apply_sha256": seccomp.sha256,
+                "seccomp_canary": copy.deepcopy(self._agent_seccomp_canary),
+                "systemd_version": self._sandbox_version,
+                "unix_socket_policy": "deny-new-af-unix-sockets",
+            }
+        if role == "comparison":
+            return {
+                "sandbox_kind": "shared-systemd-claude-executor",
+                "systemd_version": self._sandbox_version,
+            }
+        raise ProviderError(f"unsupported Claude provider role: {role}")
+
+    @staticmethod
+    def _agent_settings(runtime_home: Path, runtime_seccomp: Path) -> dict[str, Any]:
+        credential = runtime_home / ".claude" / ".credentials.json"
+        return {
+            "permissions": {
+                "deny": [
+                    f"Read(/{credential})",
+                    f"Edit(/{credential})",
+                ],
+            },
+            "sandbox": {
+                "allowUnsandboxedCommands": False,
+                "credentials": {
+                    "files": [
+                        {
+                            "mode": "deny",
+                            "path": str(credential),
+                        }
+                    ]
+                },
+                "enabled": True,
+                "failIfUnavailable": True,
+                "filesystem": {
+                    "denyRead": [str(credential)],
+                    "denyWrite": [str(credential)],
+                },
+                "network": {
+                    "allowAllUnixSockets": False,
+                    "allowedDomains": [],
+                    "deniedDomains": ["*"],
+                },
+                "seccomp": {"applyPath": str(runtime_seccomp)},
+            },
+        }
 
     def _runtime_root(self, parent: Path | None = None) -> Path:
         runtime_parent = (
@@ -1274,6 +1445,8 @@ class ClaudeCliProvider:
         runtime_credential.chmod(0o600)
         runtime_executable = runtime_bin / "claude"
         runtime_executable.touch(mode=0o700)
+        runtime_seccomp = runtime_bin / "apply-seccomp"
+        runtime_seccomp.touch(mode=0o700)
         return runtime_home, runtime_bin, runtime_executable
 
     def _credential_source(self) -> Path:
@@ -1343,6 +1516,7 @@ class ClaudeCliProvider:
             "SHELL=/bin/bash",
             "TERM=dumb",
             "CI=1",
+            "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1",
             self._unshare,
             "--user",
             "--map-current-user",
@@ -1370,53 +1544,20 @@ class ClaudeCliProvider:
             "--wait",
             "--collect",
             f"--unit={unit_name}",
-            "-p",
-            "ProtectSystem=strict",
-            "-p",
-            "ProtectHome=read-only",
-            "-p",
-            "PrivateTmp=yes",
-            "-p",
-            "NoNewPrivileges=yes",
-            "-p",
-            "RestrictSUIDSGID=yes",
-            "-p",
-            "ProtectProc=invisible",
-            "-p",
-            "ProcSubset=pid",
-            "-p",
-            "PrivateUsers=yes",
-            "-p",
-            "PrivateDevices=yes",
-            "-p",
-            "ProtectKernelTunables=yes",
-            "-p",
-            "ProtectKernelModules=yes",
-            "-p",
-            "ProtectKernelLogs=yes",
-            "-p",
-            "ProtectControlGroups=yes",
-            "-p",
-            "LockPersonality=yes",
-            "-p",
-            "RestrictRealtime=yes",
-            "-p",
-            "MemoryMax=4G",
-            "-p",
-            "TasksMax=512",
-            "-p",
-            "LimitNOFILE=4096",
-            "-p",
-            "LimitFSIZE=512M",
-            "-p",
-            f"RuntimeMaxSec={timeout_seconds}s",
-            "-p",
-            "KillMode=control-group",
-            "-p",
-            "UMask=0077",
-            "-p",
-            f"ReadWritePaths={runtime_mount}",
         ]
+        for isolation_property in SANDBOX_ISOLATION_PROPERTIES:
+            command.extend(["-p", isolation_property])
+        for resource_property in (
+            "MemoryMax=4G",
+            "TasksMax=512",
+            "LimitNOFILE=4096",
+            "LimitFSIZE=512M",
+            f"RuntimeMaxSec={timeout_seconds}s",
+            "KillMode=control-group",
+            "UMask=0077",
+            f"ReadWritePaths={runtime_mount}",
+        ):
+            command.extend(["-p", resource_property])
         inaccessible = [
             repository_root.resolve(),
             *_sensitive_host_roots(),
@@ -1430,14 +1571,16 @@ class ClaudeCliProvider:
         command.extend(["-p", f"BindPaths={runtime_root}:{runtime_mount}"])
         return command
 
-    def _sandbox_evidence(self, command: list[str]) -> dict[str, Any]:
+    def _sandbox_evidence(
+        self, command: list[str], agent_settings: dict[str, Any]
+    ) -> dict[str, Any]:
         properties = [
             value
             for index, value in enumerate(command)
             if index > 0 and command[index - 1] == "-p"
         ]
         return {
-            "kind": "systemd-run-user",
+            "kind": capabilities_for("claude-cli").sandbox_kind,
             "enforced": True,
             "executable": self._systemd_run,
             "claude_executable_path": self._executable,
@@ -1448,7 +1591,24 @@ class ClaudeCliProvider:
             "properties": properties,
             "environment_mode": "env-i-allowlist",
             "process_namespace": "unshare-user-pid-private-proc",
-            "credential_scope": "ephemeral-home-only-inside-unit",
+            "credential_scope": "controller-auth-denied-to-model-tools",
+            "agent_tool_sandbox": {
+                "credential_files_denied": True,
+                "fail_if_unavailable": True,
+                "network_domains_denied": True,
+                "seccomp_apply_sha256": self._agent_seccomp().sha256,
+                "seccomp_canary": copy.deepcopy(self._agent_seccomp_canary),
+                "unsandboxed_commands_allowed": False,
+                "unix_socket_creation_denied": True,
+            },
+            "agent_settings_sha256": hashlib.sha256(
+                json.dumps(
+                    agent_settings,
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ).encode("ascii")
+            ).hexdigest(),
         }
 
     def _execute(
@@ -1461,35 +1621,35 @@ class ClaudeCliProvider:
         unit_name: str,
         on_dispatched: Callable[[], None] | None,
     ) -> tuple[dict[str, Any], float]:
-        started = time.monotonic()
         try:
-            completed = subprocess.run(
+            completed = execute_bounded_transport(
                 command,
                 cwd=cwd,
-                input=prompt,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                check=False,
-                shell=False,
-                env=_systemd_client_environment(),
-                start_new_session=True,
+                stdin_bytes=prompt.encode("utf-8"),
+                timeout_seconds=timeout,
+                stdout_limit=MAX_RESPONSE_BYTES,
+                stderr_limit=MAX_STDERR_BYTES,
+                terminate=lambda: self._terminate_unit(unit_name),
+                evidence={},
+                process_label="Claude CLI",
+                on_started=on_dispatched,
             )
-        except subprocess.TimeoutExpired as exc:
-            if on_dispatched is not None:
-                on_dispatched()
-            self._terminate_unit(unit_name)
-            raise ProviderError(f"Claude CLI timed out after {timeout}s") from exc
-        except OSError as exc:
-            raise ProviderError(f"Claude CLI could not execute: {exc}") from exc
-        if on_dispatched is not None:
-            on_dispatched()
-        duration = time.monotonic() - started
+        except TransportOverflowError as exc:
+            raise ProviderError(str(exc)) from exc
+        except CalibrationError as exc:
+            raise ProviderError(str(exc)) from exc
         if completed.returncode != 0:
-            detail = (completed.stderr or completed.stdout).strip()
+            detail = (
+                (completed.stderr or completed.stdout)
+                .decode("utf-8", errors="replace")
+                .strip()
+            )
             raise ProviderError(f"Claude CLI exited {completed.returncode}: {detail}")
         try:
-            payload = json.loads(completed.stdout)
+            response = completed.stdout.decode("utf-8")
+            payload = json.loads(response)
+        except UnicodeDecodeError as exc:
+            raise ProviderError("Claude CLI response is not valid UTF-8") from exc
         except json.JSONDecodeError as exc:
             raise ProviderError(f"Claude CLI returned invalid JSON: {exc}") from exc
         if not isinstance(payload, dict):
@@ -1498,7 +1658,7 @@ class ClaudeCliProvider:
             raise ProviderError(
                 f"Claude CLI reported an error: {payload.get('result', 'unknown')}"
             )
-        return payload, duration
+        return payload, completed.duration_seconds
 
     def _terminate_unit(self, unit_name: str) -> None:
         try:
@@ -1605,6 +1765,55 @@ def _resolve_executable(value: str) -> str:
     if resolved is None:
         raise ProviderError(f"provider executable is not on PATH: {value}")
     return str(Path(resolved).resolve())
+
+
+def _resolve_agent_seccomp_executable(
+    claude_executable: str, *, environment_variable: str
+) -> Path:
+    explicit = os.environ.get(environment_variable)
+    if explicit is not None:
+        if not explicit or "\0" in explicit:
+            raise ProviderError(f"{environment_variable} is invalid")
+        candidates = (Path(explicit).expanduser(),)
+    else:
+        architecture = {
+            "aarch64": "arm64",
+            "arm64": "arm64",
+            "x86_64": "x64",
+            "x64": "x64",
+        }.get(platform.machine().lower())
+        if architecture is None:
+            raise ProviderError(
+                "Claude Unix-socket seccomp helper does not support this architecture"
+            )
+        package_suffix = (
+            Path("@anthropic-ai/sandbox-runtime/vendor/seccomp")
+            / architecture
+            / "apply-seccomp"
+        )
+        home = Path.home()
+        executable_prefix = Path(claude_executable).resolve().parent.parent
+        candidates = (
+            Path(claude_executable).resolve().with_name("apply-seccomp"),
+            executable_prefix / "lib/node_modules" / package_suffix,
+            Path("/usr/lib/node_modules") / package_suffix,
+            Path("/usr/local/lib/node_modules") / package_suffix,
+            Path("/opt/homebrew/lib/node_modules") / package_suffix,
+            home / ".npm/lib/node_modules" / package_suffix,
+            home / ".npm-global/lib/node_modules" / package_suffix,
+        )
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve(strict=True)
+        except OSError:
+            continue
+        if resolved.is_file() and os.access(resolved, os.X_OK):
+            return resolved
+    raise ProviderError(
+        "Claude generation requires the executable @anthropic-ai/sandbox-runtime "
+        "apply-seccomp helper; install it globally or set "
+        f"{environment_variable}"
+    )
 
 
 def _extract_models(payload: dict[str, Any]) -> tuple[str, ...]:

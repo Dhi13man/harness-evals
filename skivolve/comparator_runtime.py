@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import importlib.util
 import json
@@ -20,7 +21,7 @@ import uuid
 from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Callable
 
 from skivolve.comparator_profiles import (
     ComparatorProfileResources,
@@ -78,6 +79,28 @@ MAX_BASE_BYTES = 2 * 1024 * 1024
 MAX_DIFF_BYTES = 1024 * 1024
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_STDERR_BYTES = 1024 * 1024
+# ProtectKernelTunables and ProtectKernelLogs are deliberately absent: once a
+# systemd user manager enforces their /proc over-mounts, the kernel rejects the
+# nested candidate `unshare --mount-proc` these units depend on. PrivateUsers
+# blocks tunable writes, PrivateDevices removes /dev/kmsg, and the filter
+# denies syslog(2) with EPERM.
+SANDBOX_ISOLATION_PROPERTIES = (
+    "ProtectSystem=strict",
+    "ProtectHome=read-only",
+    "PrivateTmp=yes",
+    "NoNewPrivileges=yes",
+    "RestrictSUIDSGID=yes",
+    "ProtectProc=invisible",
+    "ProcSubset=pid",
+    "PrivateUsers=yes",
+    "PrivateDevices=yes",
+    "ProtectKernelModules=yes",
+    "ProtectControlGroups=yes",
+    "LockPersonality=yes",
+    "RestrictRealtime=yes",
+    "SystemCallFilter=~syslog",
+    "SystemCallErrorNumber=EPERM",
+)
 _SPEND_ATTEMPT_RE = re.compile(r"^[0-9a-f]{32}$")
 _SPEND_BINDING_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -194,10 +217,188 @@ class TransportExecution:
 class TransportOverflowError(CalibrationError):
     """A transport stream exceeded its hard byte ceiling."""
 
-    def __init__(self, stream: str, captured: bytes) -> None:
-        super().__init__(f"Claude comparator {stream} exceeds byte limit")
+    def __init__(
+        self,
+        stream: str,
+        captured: bytes,
+        *,
+        process_label: str = "Claude comparator",
+    ) -> None:
+        super().__init__(f"{process_label} {stream} exceeds byte limit")
         self.stream = stream
         self.captured = captured
+
+
+def execute_bounded_transport(
+    command: list[str],
+    *,
+    cwd: Path,
+    stdin_bytes: bytes,
+    timeout_seconds: int,
+    stdout_limit: int,
+    stderr_limit: int,
+    terminate: Callable[[], None],
+    evidence: dict[str, Any],
+    process_label: str,
+    on_started: Callable[[], None] | None = None,
+) -> TransportExecution:
+    """Run one process while retaining at most the declared stream limits."""
+
+    if timeout_seconds <= 0 or stdout_limit <= 0 or stderr_limit <= 0:
+        raise ValueError("transport limits must be positive")
+    started = time.monotonic()
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=cwd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=False,
+            env=_systemd_client_environment(),
+            start_new_session=True,
+        )
+    except OSError as exc:
+        raise CalibrationError(f"{process_label} could not execute: {exc}") from exc
+    assert process.stdin is not None
+    assert process.stdout is not None
+    assert process.stderr is not None
+
+    def stop_process() -> None:
+        with contextlib.suppress(BaseException):
+            terminate()
+        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+            os.killpg(process.pid, signal.SIGKILL)
+        with contextlib.suppress(BaseException):
+            process.kill()
+
+    def close_pipes() -> None:
+        for stream in (process.stdin, process.stdout, process.stderr):
+            with contextlib.suppress(OSError):
+                stream.close()
+
+    try:
+        if on_started is not None:
+            on_started()
+    except BaseException:
+        stop_process()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=5)
+        close_pipes()
+        raise
+
+    buffers = {"stdout": bytearray(), "stderr": bytearray()}
+    limits = {"stdout": stdout_limit, "stderr": stderr_limit}
+    overflow = threading.Event()
+    overflow_stream: list[str] = []
+    reader_errors: list[BaseException] = []
+    lock = threading.Lock()
+
+    def read_stream(name: str, stream: Any) -> None:
+        try:
+            while chunk := stream.read(64 * 1024):
+                with lock:
+                    remaining = limits[name] - len(buffers[name])
+                    if remaining > 0:
+                        buffers[name].extend(chunk[:remaining])
+                    if len(chunk) > remaining:
+                        if not overflow_stream:
+                            overflow_stream.append(name)
+                        overflow.set()
+                        return
+        except BaseException as exc:  # surfaced as transport failure below
+            reader_errors.append(exc)
+
+    def write_stdin() -> None:
+        try:
+            process.stdin.write(stdin_bytes)
+            process.stdin.close()
+        except (BrokenPipeError, OSError):
+            try:
+                process.stdin.close()
+            except OSError:
+                pass
+
+    readers = [
+        threading.Thread(
+            target=read_stream,
+            args=("stdout", process.stdout),
+            name="transport-stdout",
+        ),
+        threading.Thread(
+            target=read_stream,
+            args=("stderr", process.stderr),
+            name="transport-stderr",
+        ),
+    ]
+    writer = threading.Thread(target=write_stdin, name="transport-stdin")
+    for thread in (*readers, writer):
+        thread.start()
+    deadline = started + timeout_seconds
+    timed_out = False
+    terminated = False
+    while process.poll() is None:
+        if overflow.is_set():
+            break
+        if time.monotonic() >= deadline:
+            timed_out = True
+            break
+        time.sleep(0.01)
+    if process.poll() is None:
+        stop_process()
+        terminated = True
+    cleanup_deadline = time.monotonic() + 5
+
+    def remaining_cleanup() -> float:
+        return max(0.001, cleanup_deadline - time.monotonic())
+
+    try:
+        process.wait(timeout=remaining_cleanup())
+    except subprocess.TimeoutExpired:
+        stop_process()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=remaining_cleanup())
+    if process.poll() is None:
+        close_pipes()
+    for thread in (*readers, writer):
+        thread.join(timeout=remaining_cleanup())
+    close_pipes()
+    cleanup_incomplete = process.poll() is None or any(
+        thread.is_alive() for thread in (*readers, writer)
+    )
+    if cleanup_incomplete:
+        reason = (
+            f"{overflow_stream[0]} overflow"
+            if overflow_stream
+            else "timeout"
+            if timed_out
+            else "completion"
+        )
+        raise CalibrationError(f"{process_label} cleanup did not finish after {reason}")
+    duration = time.monotonic() - started
+    if overflow.is_set():
+        if not terminated:
+            try:
+                terminate()
+            except BaseException:
+                pass
+        name = overflow_stream[0]
+        raise TransportOverflowError(
+            name,
+            bytes(buffers[name]),
+            process_label=process_label,
+        )
+    if timed_out:
+        raise CalibrationError(f"{process_label} timed out after {timeout_seconds}s")
+    if reader_errors:
+        raise CalibrationError(f"{process_label} stream capture failed")
+    return TransportExecution(
+        process.returncode,
+        bytes(buffers["stdout"]),
+        bytes(buffers["stderr"]),
+        duration,
+        evidence,
+    )
 
 
 @dataclass(frozen=True)
@@ -784,21 +985,7 @@ class SandboxedClaudeExecutor:
         mounted_work = Path(self.command_executable).parents[1] / "work"
         unit_name = f"skill-eval-comparator-{uuid.uuid4().hex}"
         properties = [
-            "ProtectSystem=strict",
-            "ProtectHome=read-only",
-            "PrivateTmp=yes",
-            "NoNewPrivileges=yes",
-            "RestrictSUIDSGID=yes",
-            "ProtectProc=invisible",
-            "ProcSubset=pid",
-            "PrivateUsers=yes",
-            "PrivateDevices=yes",
-            "ProtectKernelTunables=yes",
-            "ProtectKernelModules=yes",
-            "ProtectKernelLogs=yes",
-            "ProtectControlGroups=yes",
-            "LockPersonality=yes",
-            "RestrictRealtime=yes",
+            *SANDBOX_ISOLATION_PROPERTIES,
             "MemoryMax=4G",
             "TasksMax=512",
             "LimitNOFILE=4096",
@@ -901,120 +1088,16 @@ class SandboxedClaudeExecutor:
         unit_name: str,
         evidence: dict[str, Any],
     ) -> TransportExecution:
-        started = time.monotonic()
-        try:
-            process = subprocess.Popen(
-                command,
-                cwd=cwd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                shell=False,
-                env=_systemd_client_environment(),
-                start_new_session=True,
-            )
-        except OSError as exc:
-            raise CalibrationError(
-                f"Claude comparator could not execute: {exc}"
-            ) from exc
-        assert process.stdin is not None
-        assert process.stdout is not None
-        assert process.stderr is not None
-        buffers = {"stdout": bytearray(), "stderr": bytearray()}
-        limits = {"stdout": MAX_RESPONSE_BYTES, "stderr": MAX_STDERR_BYTES}
-        overflow = threading.Event()
-        overflow_stream: list[str] = []
-        reader_errors: list[BaseException] = []
-        lock = threading.Lock()
-
-        def read_stream(name: str, stream: Any) -> None:
-            try:
-                while chunk := stream.read(64 * 1024):
-                    with lock:
-                        remaining = limits[name] - len(buffers[name])
-                        if remaining > 0:
-                            buffers[name].extend(chunk[:remaining])
-                        if len(chunk) > remaining:
-                            if not overflow_stream:
-                                overflow_stream.append(name)
-                            overflow.set()
-                            return
-            except BaseException as exc:  # surfaced as transport failure below
-                reader_errors.append(exc)
-
-        def write_stdin() -> None:
-            try:
-                process.stdin.write(stdin_bytes)
-                process.stdin.close()
-            except (BrokenPipeError, OSError):
-                try:
-                    process.stdin.close()
-                except OSError:
-                    pass
-
-        readers = [
-            threading.Thread(
-                target=read_stream,
-                args=("stdout", process.stdout),
-                name="comparator-stdout",
-            ),
-            threading.Thread(
-                target=read_stream,
-                args=("stderr", process.stderr),
-                name="comparator-stderr",
-            ),
-        ]
-        writer = threading.Thread(target=write_stdin, name="comparator-stdin")
-        for thread in (*readers, writer):
-            thread.start()
-        deadline = started + timeout_seconds
-        timed_out = False
-        terminated = False
-        while process.poll() is None:
-            if overflow.is_set():
-                break
-            if time.monotonic() >= deadline:
-                timed_out = True
-                break
-            time.sleep(0.01)
-        if process.poll() is None:
-            self._terminate(unit_name)
-            terminated = True
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                process.kill()
-        try:
-            process.wait(timeout=15)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
-        for thread in (*readers, writer):
-            thread.join(timeout=15)
-        process.stdout.close()
-        process.stderr.close()
-        if any(thread.is_alive() for thread in (*readers, writer)):
-            raise CalibrationError("Claude comparator transport threads did not stop")
-        duration = time.monotonic() - started
-        if reader_errors:
-            raise CalibrationError(
-                f"Claude comparator stream capture failed: {reader_errors[0]}"
-            )
-        if overflow.is_set():
-            if not terminated:
-                self._terminate(unit_name)
-            name = overflow_stream[0]
-            raise TransportOverflowError(name, bytes(buffers[name]))
-        if timed_out:
-            raise CalibrationError(
-                f"Claude comparator timed out after {timeout_seconds}s"
-            )
-        return TransportExecution(
-            process.returncode,
-            bytes(buffers["stdout"]),
-            bytes(buffers["stderr"]),
-            duration,
-            evidence,
+        return execute_bounded_transport(
+            command,
+            cwd=cwd,
+            stdin_bytes=stdin_bytes,
+            timeout_seconds=timeout_seconds,
+            stdout_limit=MAX_RESPONSE_BYTES,
+            stderr_limit=MAX_STDERR_BYTES,
+            terminate=lambda: self._terminate(unit_name),
+            evidence=evidence,
+            process_label="Claude comparator",
         )
 
     def _capture_version(self) -> str:
@@ -1936,15 +2019,31 @@ def load_private_json_capture(
         opened = os.fstat(descriptor)
         _validate_private_file(opened, str(target), expected_identity=identity)
         chunks: list[bytes] = []
+        first_digest = hashlib.sha256()
         remaining = opened.st_size
         while remaining:
             chunk = os.read(descriptor, min(1024 * 1024, remaining))
             if not chunk:
                 raise CalibrationError("private JSON artifact was truncated")
             chunks.append(chunk)
+            first_digest.update(chunk)
             remaining -= len(chunk)
         if os.read(descriptor, 1):
             raise CalibrationError("private JSON artifact grew while reading")
+        _validate_private_file(
+            os.fstat(descriptor), str(target), expected_identity=identity
+        )
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        second_digest = hashlib.sha256()
+        remaining = opened.st_size
+        while remaining:
+            chunk = os.read(descriptor, min(1024 * 1024, remaining))
+            if not chunk:
+                raise CalibrationError("private JSON artifact changed while reading")
+            second_digest.update(chunk)
+            remaining -= len(chunk)
+        if os.read(descriptor, 1) or second_digest.digest() != first_digest.digest():
+            raise CalibrationError(f"{target} is not a stable owner-only regular file")
         _validate_private_file(
             os.fstat(descriptor), str(target), expected_identity=identity
         )
@@ -1958,7 +2057,7 @@ def load_private_json_capture(
     return (
         _calibration.parse_json_object(raw, str(target)),
         raw_bytes,
-        hashlib.sha256(raw_bytes).hexdigest(),
+        first_digest.hexdigest(),
     )
 
 

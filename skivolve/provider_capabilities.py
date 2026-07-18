@@ -62,10 +62,10 @@ _CAPABILITIES: Mapping[str, ProviderCapabilities] = MappingProxyType(
         "claude-cli": ProviderCapabilities(
             adapter_id="claude-cli",
             legacy_kind="claude",
-            contract_revision=2,
+            contract_revision=3,
             roles=("comparison", "generation"),
             concurrency="concurrent",
-            sandbox_kind="systemd-run-user",
+            sandbox_kind="systemd-run-user+claude-native-tool-sandbox",
             authority_scope="production",
             billing_basis="metered_api",
             cost_evidence="required",

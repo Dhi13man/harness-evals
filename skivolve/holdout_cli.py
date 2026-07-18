@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare and prove a sealed external holdout authorization plan."""
+"""Prepare and preflight a sealed external holdout authorization plan."""
 
 from __future__ import annotations
 
@@ -32,17 +32,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         dest="reviewers",
         required=True,
-        help="independent reviewer identity; repeat for each reviewer",
+        help="operator-supplied reviewer label; repeat for each reviewer",
     )
     parser.add_argument(
         "--freeze-record",
         required=True,
-        help="review record establishing that cases were frozen before evaluation",
+        help="operator-supplied record locator for the pre-evaluation freeze",
     )
     parser.add_argument(
         "--seal-record",
         required=True,
-        help="review record establishing independent sealing approval",
+        help="operator-supplied record locator for sealing approval",
     )
     return parser
 

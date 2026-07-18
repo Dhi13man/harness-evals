@@ -1,4 +1,4 @@
-"""Strict loading for externally reviewed holdout release plans."""
+"""Strict loading for operator-supplied holdout release plans."""
 
 from __future__ import annotations
 
@@ -25,10 +25,15 @@ SOURCE_FINGERPRINT_DOMAIN = b"skivolve-source-fingerprint-v3\0"
 EMPTY_SOURCE_SHA256 = hashlib.sha256(
     SOURCE_FINGERPRINT_DOMAIN + b"empty-source\0"
 ).hexdigest()
+OPERATOR_DECLARED_ASSURANCE = "operator-declared-review-records"
+LEGACY_REVIEW_ASSURANCE = "trusted-reviewed-attestation"
+SUPPORTED_REVIEW_ASSURANCES = frozenset(
+    {OPERATOR_DECLARED_ASSURANCE, LEGACY_REVIEW_ASSURANCE}
+)
 
 
 class HoldoutPlanError(ValueError):
-    """Raised when a holdout plan is malformed or its attestation is incomplete."""
+    """Raised when a holdout plan or its declared records are incomplete."""
 
 
 @dataclass(frozen=True)
@@ -161,6 +166,7 @@ class HoldoutPlan:
     seed: int
     comparison_profile: tuple[HoldoutComparisonBinding, ...]
     cases: tuple[HoldoutCaseBinding, ...]
+    provenance_assurance: str
     reviewed_by: tuple[str, ...]
     freeze_record: str
     seal_record: str
@@ -184,7 +190,7 @@ class HoldoutPlan:
             "comparison_profile": [item.as_json() for item in self.comparison_profile],
             "cases": [item.as_json() for item in self.cases],
             "provenance": {
-                "assurance": "trusted-reviewed-attestation",
+                "assurance": self.provenance_assurance,
                 "privacy_claim": "not-a-cryptographic-privacy-proof",
                 "frozen_before_candidate_evaluation": True,
                 "sealed_after_independent_review": True,
@@ -684,7 +690,7 @@ def _parse_adapter_binding(
 
 
 def load_holdout_plan(path: Path) -> HoldoutPlan:
-    """Load a sealed, externally supplied trusted-review attestation."""
+    """Load a sealed plan containing operator-supplied review records."""
 
     supplied = Path(path).expanduser()
     raw_bytes = _read_plan_bytes(supplied, action="read")
@@ -816,10 +822,9 @@ def load_holdout_plan(path: Path) -> HoldoutPlan:
         required=provenance_fields,
         allowed=provenance_fields,
     )
-    if provenance["assurance"] != "trusted-reviewed-attestation":
-        raise HoldoutPlanError(
-            "provenance.assurance must be 'trusted-reviewed-attestation'"
-        )
+    provenance_assurance = _string(provenance["assurance"], "provenance.assurance")
+    if provenance_assurance not in SUPPORTED_REVIEW_ASSURANCES:
+        raise HoldoutPlanError("provenance.assurance is not a supported value")
     if provenance["privacy_claim"] != "not-a-cryptographic-privacy-proof":
         raise HoldoutPlanError(
             "provenance.privacy_claim must disclaim cryptographic privacy proof"
@@ -943,6 +948,7 @@ def load_holdout_plan(path: Path) -> HoldoutPlan:
         seed=_integer(data["seed"], "seed", minimum=0),
         comparison_profile=comparison_profile,
         cases=cases,
+        provenance_assurance=provenance_assurance,
         reviewed_by=_strings(
             provenance["reviewed_by"], "provenance.reviewed_by", minimum=1
         ),

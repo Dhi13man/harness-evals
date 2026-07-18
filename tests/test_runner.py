@@ -340,6 +340,9 @@ class SuiteFixture:
         self.fake_codex = self.suite_root / "fake-codex"
         self._write_suite("fake-codex", "#!/bin/sh\nexit 0\n")
         self.fake_codex.chmod(0o755)
+        self.fake_seccomp = self.suite_root / "apply-seccomp"
+        self._write_suite("apply-seccomp", "#!/bin/sh\nexit 0\n")
+        self.fake_seccomp.chmod(0o755)
         self.codex_protocol_lock = self.suite_root / "codex-protocol-lock.json"
         self.codex_protocol_lock.write_text(
             json.dumps(
@@ -3480,6 +3483,10 @@ print(json.dumps({{"passed": passed, "assertions": [{{
             self.assertIn("ProtectProc=invisible", sandbox["properties"])
             self.assertIn("ProcSubset=pid", sandbox["properties"])
             self.assertIn("PrivateUsers=yes", sandbox["properties"])
+            self.assertIn("SystemCallFilter=~syslog", sandbox["properties"])
+            self.assertIn("SystemCallErrorNumber=EPERM", sandbox["properties"])
+            self.assertNotIn("ProtectKernelTunables=yes", sandbox["properties"])
+            self.assertNotIn("ProtectKernelLogs=yes", sandbox["properties"])
             self.assertIn("MemoryMax=3G", sandbox["properties"])
             self.assertEqual(sandbox["environment_mode"], "env-i-allowlist")
             self.assertEqual(
@@ -4894,25 +4901,15 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
         exact_injected._config = claude_suite.provider
         exact_injected._version = "injected-exact-class"
         exact_injected._verified_executable = SimpleNamespace(sha256="f" * 64)
-        exact_runner = EvalRunner(
-            claude_suite,
-            exact_injected,
-            self.provider,
-        )
-        self.production_runner(
-            exact_runner,
-            bypass_generator_authority=False,
-        )
         exact_output = self.fixture.root / "exact-injected-production-plan.json"
-        with self.assertRaisesRegex(RunnerError, "exact built-in Claude CLI generator"):
-            exact_runner.prepare_holdout_plan(
-                output_path=exact_output,
-                plan_id="exact-injected-production-v1",
-                reviewers=("reviewer-a",),
-                freeze_record="review:freeze:exact-injected-production-v1",
-                seal_record="review:seal:exact-injected-production-v1",
+        with self.assertRaisesRegex(
+            RunnerError, "authority runtime provenance is unavailable"
+        ):
+            EvalRunner(
+                claude_suite,
+                exact_injected,
+                self.provider,
             )
-        self.assertFalse(exact_runner._production_generator_release_authoritative())
         self.assertFalse(exact_output.exists())
 
     def test_manifest_built_claude_authority_is_reachable_without_transport(
@@ -4939,10 +4936,16 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
                 "_probe_sandbox",
                 return_value="systemd-fixture-1",
             ) as probe_sandbox,
+            patch.object(
+                ClaudeCliProvider,
+                "_probe_agent_seccomp",
+                return_value={"af_unix_socket_creation_denied": True},
+            ) as probe_seccomp,
         ):
             runner = EvalRunner(suite, comparator_provider=self.provider)
         capture_version.assert_called_once_with()
         probe_sandbox.assert_called_once_with()
+        probe_seccomp.assert_called_once()
         self.addCleanup(runner.close)
         self.production_runner(runner, bypass_generator_authority=False)
 
@@ -4972,6 +4975,40 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
             expected_digest,
         )
         self.assertEqual(plan.generator_provider.executable_sha256, expected_digest)
+        request = AgentRequest(
+            case_id="basic",
+            variant_id="without",
+            prompt="prompt",
+            model=suite.provider.model,
+            workspace=self.fixture.suite_root / "fixture",
+            skill_snapshot=None,
+            sandbox_pair_root=self.fixture.suite_root,
+            sandbox_repository_root=self.fixture.repository,
+            system_context="context",
+            timeout_seconds=5,
+        )
+        sandbox = runner.agent_provider._sandbox_evidence(
+            ["systemd-run", "-p", "ProtectSystem=strict"],
+            runner.agent_provider._agent_settings(
+                Path("/runtime/home"), Path("/runtime/bin/apply-seccomp")
+            ),
+        )
+        accepted = runner._agent_result_json(
+            ProviderResult(
+                final_output="done",
+                requested_model=request.model,
+                actual_models=(request.model,),
+                provider_name=runner.agent_provider.name,
+                provider_version=runner.agent_provider.version,
+                duration_seconds=0.1,
+                cost_usd=0.01,
+                tokens={"input_tokens": 1},
+                sandbox=sandbox,
+                raw_response={"result": "done"},
+            ),
+            request,
+        )
+        self.assertEqual(accepted["sandbox"], sandbox)
         self.assertEqual(self.provider.agent_requests, [])
         self.assertEqual(self.provider.comparator_requests, [])
 
@@ -5400,7 +5437,7 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(RunnerError, "cases do not exactly match"):
             self.runner().preflight(self.selection())
 
-    def test_prepare_holdout_plan_writes_private_external_proved_plan_without_models(
+    def test_prepare_holdout_plan_writes_private_preflighted_plan_without_models(
         self,
     ) -> None:
         self.provider.executable_sha256 = "f" * 64
@@ -6220,6 +6257,11 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
         self.assertTrue(summary["binding_verified"])
         self.assertEqual(summary["file_mode"], "0600")
         self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o600)
+        prepared = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(
+            prepared["provenance"]["assurance"],
+            "operator-declared-review-records",
+        )
         self.assertTrue(runner._closed)
         self.assertEqual(self.provider.agent_requests, [])
         self.assertEqual(self.provider.comparator_requests, [])
@@ -6242,6 +6284,10 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
         self.assertEqual(
             preflight["holdout_plan"]["provenance"]["privacy_claim"],
             "not-a-cryptographic-privacy-proof",
+        )
+        self.assertEqual(
+            preflight["holdout_plan"]["provenance"]["assurance"],
+            "trusted-reviewed-attestation",
         )
         self.assertEqual(
             preflight["holdout_plan"]["comparator_release_sha256"],
@@ -6405,12 +6451,12 @@ class HoldoutReleaseProtocolTests(unittest.TestCase):
                     case_records,
                 )
 
-    def test_holdout_plan_requires_external_trusted_sealed_provenance(self) -> None:
+    def test_holdout_plan_requires_supported_sealed_provenance(self) -> None:
         provenance_mutations = (
             (
                 "assurance",
                 "self-certified",
-                "trusted-reviewed-attestation",
+                "supported value",
             ),
             (
                 "privacy_claim",
@@ -7904,8 +7950,11 @@ class CheckedInSuiteTests(unittest.TestCase):
         self.assertIn("generator_adapter_binding", schema["properties"])
         provenance = schema["properties"]["provenance"]
         self.assertEqual(
-            provenance["properties"]["assurance"]["const"],
-            "trusted-reviewed-attestation",
+            provenance["properties"]["assurance"]["enum"],
+            [
+                "operator-declared-review-records",
+                "trusted-reviewed-attestation",
+            ],
         )
         self.assertEqual(
             provenance["properties"]["privacy_claim"]["const"],

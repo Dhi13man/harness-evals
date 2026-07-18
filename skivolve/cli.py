@@ -50,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--holdout-plan",
         type=Path,
         help=(
-            "sealed external trusted-review attestation required for holdout; "
+            "sealed plan with operator-declared review records required for holdout; "
             "this is not a cryptographic privacy proof"
         ),
     )

@@ -31,6 +31,7 @@ from .artifacts import (
     normalize_artifact,
 )
 from skivolve.comparator_runtime import (
+    SANDBOX_ISOLATION_PROPERTIES,
     CalibrationError,
     ComparatorRuntime,
     SpendLedger,
@@ -42,6 +43,7 @@ from skivolve.comparator_runtime import (
 
 from .holdout_plan import (
     EMPTY_SOURCE_SHA256,
+    OPERATOR_DECLARED_ASSURANCE,
     SOURCE_FINGERPRINT_DOMAIN,
     HoldoutPlan,
     HoldoutPlanError,
@@ -1274,6 +1276,14 @@ def _provider_authority_binding(
         "protocol": protocol_provenance,
         "version": provider_version,
     }
+    runtime_binding = getattr(provider, "authority_runtime_provenance", None)
+    if callable(runtime_binding):
+        try:
+            runtime_provenance["sandbox_runtime"] = runtime_binding(role)
+        except Exception as exc:
+            raise RunnerError(
+                "provider authority runtime provenance is unavailable"
+            ) from exc
     binding = {
         "adapter_id": capabilities.adapter_id,
         "authority_scope": capabilities.authority_scope,
@@ -1328,43 +1338,30 @@ def _sandbox_tooling() -> tuple[str, str, str, str, str, str, str]:
             "--wait",
             "--collect",
             f"--unit={unit_name}",
-            "-p",
-            "ProtectSystem=strict",
-            "-p",
-            "ProtectHome=read-only",
-            "-p",
-            "PrivateTmp=yes",
-            "-p",
-            "PrivateNetwork=yes",
-            "-p",
-            "NoNewPrivileges=yes",
-            "-p",
-            "RestrictSUIDSGID=yes",
-            "-p",
-            "ProtectProc=invisible",
-            "-p",
-            "ProcSubset=pid",
-            "-p",
-            "PrivateUsers=yes",
-            "-p",
-            "MemoryMax=256M",
-            "-p",
-            "TasksMax=32",
-            "-p",
-            "LimitNOFILE=256",
-            "-p",
-            "LimitFSIZE=16M",
-            "--working-directory=/",
-            "--",
-            unshare_tool,
-            "--user",
-            "--map-current-user",
-            "--pid",
-            "--fork",
-            "--mount-proc",
-            "--kill-child",
-            true_tool,
         ]
+        for probe_property in (
+            *SANDBOX_ISOLATION_PROPERTIES,
+            "PrivateNetwork=yes",
+            "MemoryMax=256M",
+            "TasksMax=32",
+            "LimitNOFILE=256",
+            "LimitFSIZE=16M",
+        ):
+            probe.extend(["-p", probe_property])
+        probe.extend(
+            [
+                "--working-directory=/",
+                "--",
+                unshare_tool,
+                "--user",
+                "--map-current-user",
+                "--pid",
+                "--fork",
+                "--mount-proc",
+                "--kill-child",
+                true_tool,
+            ]
+        )
         try:
             completed = subprocess.run(
                 probe,
@@ -2298,7 +2295,7 @@ class EvalRunner:
         freeze_record: str,
         seal_record: str,
     ) -> dict[str, Any]:
-        """Prepare, write, and prove one sealed production holdout plan."""
+        """Prepare, write, and preflight one sealed production holdout plan."""
 
         self._ensure_open()
         if (
@@ -2373,7 +2370,7 @@ class EvalRunner:
                 for case in draft["cases"]
             ],
             "provenance": {
-                "assurance": "trusted-reviewed-attestation",
+                "assurance": OPERATOR_DECLARED_ASSURANCE,
                 "privacy_claim": "not-a-cryptographic-privacy-proof",
                 "frozen_before_candidate_evaluation": True,
                 "sealed_after_independent_review": True,
@@ -4092,22 +4089,8 @@ class EvalRunner:
             raise RunnerError(f"case {case.id} resolved conflicting GCC roots")
         gcc_exec_prefix = next(iter(gcc_prefixes), None)
         properties = [
-            "ProtectSystem=strict",
-            "ProtectHome=read-only",
-            "PrivateTmp=yes",
+            *SANDBOX_ISOLATION_PROPERTIES,
             "PrivateNetwork=yes",
-            "NoNewPrivileges=yes",
-            "RestrictSUIDSGID=yes",
-            "ProtectProc=invisible",
-            "ProcSubset=pid",
-            "PrivateUsers=yes",
-            "PrivateDevices=yes",
-            "ProtectKernelTunables=yes",
-            "ProtectKernelModules=yes",
-            "ProtectKernelLogs=yes",
-            "ProtectControlGroups=yes",
-            "LockPersonality=yes",
-            "RestrictRealtime=yes",
             "MemoryMax=3G",
             "TasksMax=256",
             "LimitNOFILE=2048",
@@ -5142,7 +5125,7 @@ def _aggregate(
     holdout_release_gate = {
         "passed": holdout_protocol_valid,
         "applicable": selection.split == "holdout",
-        "trusted_reviewed_attestation_present": holdout_plan is not None,
+        "operator_declared_review_records_present": holdout_plan is not None,
         "generator_release_authoritative": generator_release_authoritative,
         "provider_authority_bound": provider_authority_bound,
         "privacy_proof_claimed": False,

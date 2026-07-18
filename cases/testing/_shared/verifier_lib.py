@@ -349,6 +349,7 @@ for (const relative of configuration.tests) originalLoad(path.resolve(root, rela
             "--disallow-code-generation-from-strings",
             "--no-addons",
             "--no-warnings",
+            "--test-reporter=tap",
             f"--experimental-loader=data:text/javascript,{quote(loader)}",
             "-e",
             wrapper,

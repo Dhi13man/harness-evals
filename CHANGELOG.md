@@ -4,6 +4,22 @@ All notable changes to Skivolve are documented in this file. The format follows 
 
 ## [Unreleased]
 
+### Changed
+
+- Reclassified holdout reviewer labels and record locators as operator-declared provenance rather than authenticated review evidence.
+- Advanced the Claude provider capability to revision 3 and bound its sandbox runtime, seccomp helper, and enforcement canary into provider authority.
+- Bounded generator and comparator subprocess output, timeout cleanup, and process-group termination.
+- Replaced `ProtectKernelTunables` and `ProtectKernelLogs` in the verifier, Claude agent, and comparator units with a `syslog(2)` seccomp denial, because systemd 256-or-newer user managers enforce those `/proc` over-mounts and the kernel then rejects the nested candidate namespace. Tunable writes stay blocked by the unprivileged user namespace and `/dev/kmsg` stays absent under `PrivateDevices`. The verifier preflight probe now exercises the exact shared isolation property set instead of a weaker copy.
+
+### Migration
+
+- Re-prepare unconsumed holdout plans that bind the Claude capability revision 2 authority; reviewed or consumed plans remain immutable.
+
+### Security
+
+- Fail Claude preflight unless code-owned sandbox settings and a digest-attested seccomp helper demonstrably block Unix sockets, while also denying credential paths and outbound network access.
+- Hide the evaluation suite and oracle sources from candidate processes, detect stable-file read races, and reject oversized or invalid UTF-8 provider output before parsing.
+
 ## [0.4.0] - 2026-07-17
 
 ### Added

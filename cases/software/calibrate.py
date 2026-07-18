@@ -30,6 +30,7 @@ def verifier_environment(
     environment.update(
         {
             "EVAL_WORKSPACE": str(workspace),
+            "EVAL_SUITE_ROOT": str(SUITE_ROOT),
             "EVAL_CASE_ROOT": str(case_root),
             "EVAL_SHARED_ROOT": str(SUITE_ROOT / "cases" / "testing" / "_shared"),
             "EVAL_HOST_UID": str(os.getuid()),

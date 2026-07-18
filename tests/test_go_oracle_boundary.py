@@ -108,6 +108,7 @@ def sandbox_environment(
     environment.update(
         {
             "EVAL_WORKSPACE": str(workspace),
+            "EVAL_SUITE_ROOT": str(SUITE_ROOT),
             "EVAL_CASE_ROOT": str(SOFTWARE_ROOT),
             "EVAL_SHARED_ROOT": str(SHARED_ROOT),
             "EVAL_HOST_UID": str(os.getuid()),

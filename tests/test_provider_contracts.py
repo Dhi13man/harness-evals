@@ -163,7 +163,10 @@ class ProviderResultContractTests(unittest.TestCase):
                     capabilities.artifact_outputs,
                     ("final_output_json", "final_output_text", "workspace_diff"),
                 )
-                self.assertEqual(capabilities.contract_revision, 2)
+                self.assertEqual(
+                    capabilities.contract_revision,
+                    3 if adapter_id == "claude-cli" else 2,
+                )
         self.assertEqual(
             capabilities_for("claude-cli", role="comparison").authority_scope,
             "production",
