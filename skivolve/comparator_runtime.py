@@ -79,6 +79,28 @@ MAX_BASE_BYTES = 2 * 1024 * 1024
 MAX_DIFF_BYTES = 1024 * 1024
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_STDERR_BYTES = 1024 * 1024
+# ProtectKernelTunables and ProtectKernelLogs are deliberately absent: once a
+# systemd user manager enforces their /proc over-mounts, the kernel rejects the
+# nested candidate `unshare --mount-proc` these units depend on. PrivateUsers
+# blocks tunable writes, PrivateDevices removes /dev/kmsg, and the filter
+# denies syslog(2) with EPERM.
+SANDBOX_ISOLATION_PROPERTIES = (
+    "ProtectSystem=strict",
+    "ProtectHome=read-only",
+    "PrivateTmp=yes",
+    "NoNewPrivileges=yes",
+    "RestrictSUIDSGID=yes",
+    "ProtectProc=invisible",
+    "ProcSubset=pid",
+    "PrivateUsers=yes",
+    "PrivateDevices=yes",
+    "ProtectKernelModules=yes",
+    "ProtectControlGroups=yes",
+    "LockPersonality=yes",
+    "RestrictRealtime=yes",
+    "SystemCallFilter=~syslog",
+    "SystemCallErrorNumber=EPERM",
+)
 _SPEND_ATTEMPT_RE = re.compile(r"^[0-9a-f]{32}$")
 _SPEND_BINDING_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -963,21 +985,7 @@ class SandboxedClaudeExecutor:
         mounted_work = Path(self.command_executable).parents[1] / "work"
         unit_name = f"skill-eval-comparator-{uuid.uuid4().hex}"
         properties = [
-            "ProtectSystem=strict",
-            "ProtectHome=read-only",
-            "PrivateTmp=yes",
-            "NoNewPrivileges=yes",
-            "RestrictSUIDSGID=yes",
-            "ProtectProc=invisible",
-            "ProcSubset=pid",
-            "PrivateUsers=yes",
-            "PrivateDevices=yes",
-            "ProtectKernelTunables=yes",
-            "ProtectKernelModules=yes",
-            "ProtectKernelLogs=yes",
-            "ProtectControlGroups=yes",
-            "LockPersonality=yes",
-            "RestrictRealtime=yes",
+            *SANDBOX_ISOLATION_PROPERTIES,
             "MemoryMax=4G",
             "TasksMax=512",
             "LimitNOFILE=4096",

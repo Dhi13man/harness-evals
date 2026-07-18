@@ -177,10 +177,10 @@
   },
   "runtime_adapter": {
     "id": "shared-harness-claude-cli-v1",
-    "source_sha256": "ba1d9d13e8be7aa74a87b276f6ba5dd97aad67e94a966ad8590d99ad0285d31b",
-    "harness_runner_source_sha256": "fdb7cc8716ae3d7121e906a64e1cd811d6156f99d69f8272e6a9a15550b8380d",
+    "source_sha256": "76155b877c806a07192db4852c7298f2519d7f8c6dd0eb7e1a26d945b65f572e",
+    "harness_runner_source_sha256": "746f17871999343d1b11fd9fe6383c0b4c8b95c79c28d31178cc9ae5abf3517d",
     "artifact_normalizer_source_sha256": "8261b249169002cf310d78048dcb4a9765cb52ab4c8ae09fc530705571510fb6",
-    "provider_source_sha256": "97a046b1c0f2bc1b5d7d5943531f5fed88a31360da2fb4f11e615d56688edf74",
+    "provider_source_sha256": "fc5cab71dcc34379c318324f8ff001e17aa134a6e5bc83f0037ade15e0f6bfd8",
     "profile_registry_source_sha256": "3fe400f690141c481119b246396ba70d98432d679c246ff97613845f0dc430ea",
     "provider_capability_registry_source_sha256": "8dcc38a4f8a617086d5efe4cbddf7da7f9de3d992a9f91800f060a62c1ab4402",
     "harness_manifest_source_sha256": "519d1d8c420e59de7a23369fc38d5fa850bfda65ce6b2a9677fb9c3e7c0ee5af",

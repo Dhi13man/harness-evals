@@ -673,8 +673,12 @@ print(json.dumps({
             "PrivateTmp=yes",
             "NoNewPrivileges=yes",
             "RestrictSUIDSGID=yes",
+            "SystemCallFilter=~syslog",
+            "SystemCallErrorNumber=EPERM",
         ):
             self.assertIn(sandbox_property, command)
+        self.assertNotIn("ProtectKernelTunables=yes", command)
+        self.assertNotIn("ProtectKernelLogs=yes", command)
         self.assertTrue(
             any(value.startswith("InaccessiblePaths=") for value in command)
         )

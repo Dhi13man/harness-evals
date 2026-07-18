@@ -3483,6 +3483,10 @@ print(json.dumps({{"passed": passed, "assertions": [{{
             self.assertIn("ProtectProc=invisible", sandbox["properties"])
             self.assertIn("ProcSubset=pid", sandbox["properties"])
             self.assertIn("PrivateUsers=yes", sandbox["properties"])
+            self.assertIn("SystemCallFilter=~syslog", sandbox["properties"])
+            self.assertIn("SystemCallErrorNumber=EPERM", sandbox["properties"])
+            self.assertNotIn("ProtectKernelTunables=yes", sandbox["properties"])
+            self.assertNotIn("ProtectKernelLogs=yes", sandbox["properties"])
             self.assertIn("MemoryMax=3G", sandbox["properties"])
             self.assertEqual(sandbox["environment_mode"], "env-i-allowlist")
             self.assertEqual(
